@@ -91,6 +91,26 @@
     "line": {
      "who": "阿青",
      "text": "老样子。"
+    },
+    "layout": {
+     "people": [
+      {
+       "who": "老周",
+       "x": 0.52,
+       "side": "画面右侧",
+       "near": "近处",
+       "move": ""
+      },
+      {
+       "who": "阿青",
+       "x": -0.11,
+       "side": "画面中间",
+       "near": "近处",
+       "move": ""
+      }
+     ],
+     "crowd": null,
+     "pitch": "平视"
     }
    }
   },
@@ -131,7 +151,21 @@
     ],
     "move": {
      "kind": "push",
-     "en": "the camera pushes in slowly"
+     "en": "the camera pushes in slowly",
+     "zh": "镜头缓慢推近"
+    },
+    "layout": {
+     "people": [
+      {
+       "who": "老周",
+       "x": -0.02,
+       "side": "画面中间",
+       "near": "中景处",
+       "move": "朝画面左边、走远"
+      }
+     ],
+     "crowd": null,
+     "pitch": "平视"
     }
    }
   },
@@ -158,7 +192,12 @@
       "zh": "她的手停在零钱上没收",
       "en": "her hand stops on the change without picking it up"
      }
-    ]
+    ],
+    "layout": {
+     "people": [],
+     "crowd": null,
+     "pitch": "平视"
+    }
    }
   }
  ],

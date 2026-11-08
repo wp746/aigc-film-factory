@@ -91,6 +91,26 @@
     "line": {
      "who": "阿青",
      "text": "雨快停了。"
+    },
+    "layout": {
+     "people": [
+      {
+       "who": "老周",
+       "x": 0.43,
+       "side": "画面中间偏右",
+       "near": "近处",
+       "move": ""
+      },
+      {
+       "who": "阿青",
+       "x": -0.2,
+       "side": "画面中间偏左",
+       "near": "近处",
+       "move": ""
+      }
+     ],
+     "crowd": null,
+     "pitch": "平视"
     }
    }
   },
@@ -140,7 +160,21 @@
     },
     "move": {
      "kind": "pull",
-     "en": "the camera pulls back slowly"
+     "en": "the camera pulls back slowly",
+     "zh": "镜头缓慢拉远"
+    },
+    "layout": {
+     "people": [
+      {
+       "who": "老周",
+       "x": 0.37,
+       "side": "画面中间偏右",
+       "near": "中景处",
+       "move": "朝画面左边、走远"
+      }
+     ],
+     "crowd": null,
+     "pitch": "平视"
     }
    }
   },
@@ -164,7 +198,20 @@
       "zh": "她看着门口，没有说话",
       "en": "she watches the door without a word"
      }
-    ]
+    ],
+    "layout": {
+     "people": [
+      {
+       "who": "阿青",
+       "x": -0.24,
+       "side": "画面中间偏左",
+       "near": "近处",
+       "move": ""
+      }
+     ],
+     "crowd": null,
+     "pitch": "平视"
+    }
    }
   }
  ],

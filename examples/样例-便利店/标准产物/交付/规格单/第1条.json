@@ -103,7 +103,21 @@
     ],
     "move": {
      "kind": "push",
-     "en": "the camera pushes in slowly"
+     "en": "the camera pushes in slowly",
+     "zh": "镜头缓慢推近"
+    },
+    "layout": {
+     "people": [
+      {
+       "who": "阿青",
+       "x": 0.01,
+       "side": "画面中间",
+       "near": "中景处",
+       "move": ""
+      }
+     ],
+     "crowd": null,
+     "pitch": "平视"
     }
    }
   },
@@ -133,6 +147,19 @@
      "text": "又是三点。",
      "delivery": "轻声，像自言自语",
      "delivery_en": "softly, almost to herself"
+    },
+    "layout": {
+     "people": [
+      {
+       "who": "阿青",
+       "x": 0.24,
+       "side": "画面中间偏右",
+       "near": "近处",
+       "move": ""
+      }
+     ],
+     "crowd": null,
+     "pitch": "平视"
     }
    }
   },
@@ -168,7 +195,27 @@
       "en": "a door chime",
       "source": "门口"
      }
-    ]
+    ],
+    "layout": {
+     "people": [
+      {
+       "who": "阿青",
+       "x": 0.86,
+       "side": "画面右侧",
+       "near": "近处",
+       "move": ""
+      },
+      {
+       "who": "老周",
+       "x": 0.4,
+       "side": "画面中间偏右",
+       "near": "近处",
+       "move": "朝画面右边、朝镜头走近"
+      }
+     ],
+     "crowd": null,
+     "pitch": "平视"
+    }
    }
   },
   {
@@ -193,7 +240,12 @@
       "zh": "她从柜台下摸出一包素白烟盒，放在台面上",
       "en": "it takes a plain white cigarette pack from under the counter and sets it on the countertop"
      }
-    ]
+    ],
+    "layout": {
+     "people": [],
+     "crowd": null,
+     "pitch": "平视"
+    }
    }
   }
  ],

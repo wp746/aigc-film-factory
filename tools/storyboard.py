@@ -520,13 +520,28 @@ def validate(bible, board, models=("seedance",)):
     all_shots = [s for c in board.get("clips", []) for s in c.get("shots", [])]
     if all_shots and all(s.get("line") for s in all_shots):
         W.append("全片每一镜都有台词：至少留一段不靠台词、只用画面和声音讲的戏（docs/20 第二节第 5 条）")
-    img_cap = {"seedance": 30, "kling": 10, "hailuo": 9, "wan": 10}  # 各家参考图上限（docs/13）
+    img_cap = {"seedance": 30, "hailuo": 9, "wan": 10}  # 各家参考图上限（docs/13）
     for c in board.get("clips", []):  # 白模里的每个人都要有参考图，否则模型会把代理原样画出来（4.0 alpha.10，万相实拍教训）
         people_n = sum(1 for n in c.get("cast", {}) if chars.get(n, {}).get("kind") != "voice")
         need = people_n + 1 + (1 if any(s.get("crowd") for s in c.get("shots", [])) else 0)
         for m in models:
             if m in img_cap and need > img_cap[m]:
                 W.append(f"第{c.get('n')}条 有 {people_n} 个人加场景图，{m} 最多收 {img_cap[m]} 张参考图：多出来的人在白模里有代理却没有图，会被画成纯色小人；拆条或减人（docs/13 八·六）")
+    if "wan" in models:  # 万相默认不喂白模，空间全靠文字：两人以上同场要写场面布局（docs/14 4.3 第 5 条）
+        for c in board.get("clips", []):
+            seen = [n for n, v in c.get("cast", {}).items() if not v.get("hidden") and chars.get(n, {}).get("kind") != "voice"]
+            if len(seen) >= 2 and not c.get("blocking"):
+                W.append(f"第{c.get('n')}条 有 {len(seen)} 个人同场，万相不喂白模：写 blocking（谁坐谁站、面朝哪、离门窗家具多远、谁在门里谁在门外），给每人写 cast.pose（姿势、发型、手里的东西）")
+    for c in board.get("clips", []):  # hidden：在场但看不见的人（坐在轿里、躲在柜子里）
+        for n, v in c.get("cast", {}).items():
+            if "hidden" not in v:
+                continue
+            if not isinstance(v["hidden"], str) or len(v["hidden"]) < 3:
+                E.append(f"第{c.get('n')}条 「{n}」的 hidden 要写一句她在哪、为什么看不见，如 \"坐在花轿里，轿帘放下\"（会写进提示词）")
+            for k, sh in enumerate(c.get("shots", []), 1):
+                ln = sh.get("line") or {}
+                if n in (sh.get("who") or []) or n in (sh.get("subject"), sh.get("fg")) or (ln.get("who") == n and ln.get("mode", "on") != "off"):
+                    E.append(f"第{c.get('n')}条 镜{k}「{n}」写了 hidden（看不见），却出现在画面里；说话只能 mode: off")
     script_check(bible, board, E, W)
     action_check(board, W)
     look_check(bible, board, E, W)
@@ -1110,6 +1125,8 @@ class Clip:
     def people(self):
         out = []
         for i, name in enumerate(self.c["cast"]):
+            if self.c["cast"][name].get("hidden"):  # 藏在轿里、箱里、门后的人：白模不渲，模型就不会把代理画出来（4.0 alpha.10，实拍《好日子》第 6 条）
+                continue
             keys = []
             for p in self.path(name):
                 f = p.get("face", self.c["cast"][name].get("face", 0))
@@ -1584,8 +1601,67 @@ class Clip:
             t0 = t1
         return out
 
+    def layout(self, s, t0, cm, ppl):
+        """不喂白模时（万相 3.0 默认，4.0 alpha.11）：从机位和站位算出每个人在画面哪一侧、远近、往哪走，写进提示词。"""
+        def at(person, t):
+            ks = person["keys"]
+            if t <= ks[0]["t"]:
+                return ks[0]["pos"]
+            for a, b in zip(ks, ks[1:]):
+                if a["t"] <= t <= b["t"]:
+                    f = 0 if b["t"] == a["t"] else (t - a["t"]) / (b["t"] - a["t"])
+                    return [a["pos"][i] + (b["pos"][i] - a["pos"][i]) * f for i in range(3)]
+            return ks[-1]["pos"]
+        cp = cm["keys"][0]["pos"]
+        la = cm["look_at"]
+        lk = (self.pos(la, t0) if la in self.c["cast"] else self.pt(la)) if isinstance(la, str) else la
+        fx, fy = lk[0] - cp[0], lk[1] - cp[1]
+        n = math.hypot(fx, fy) or 1.0
+        fx, fy = fx / n, fy / n
+        rx, ry = fy, -fx  # 画面右方
+        half = math.tan(math.radians(K.hfov(cm["lens"]) / 2)) if hasattr(K, "hfov") else 36 / 2 / cm["lens"]
+
+        def screen(q):
+            dx, dy = q[0] - cp[0], q[1] - cp[1]
+            depth = dx * fx + dy * fy
+            return (dx * rx + dy * ry) / max(depth, 0.1) / half, depth
+
+        def side(x):
+            if abs(x) <= 0.12:
+                return "画面中间"
+            return ("画面左侧" if x < 0 else "画面右侧") if abs(x) > 0.45 else ("画面中间偏左" if x < 0 else "画面中间偏右")  # 过肩镜里前景在边上、主体在中间偏一侧，分开写才不会两个人都是"右侧"
+
+        def move(a, b, da, db):
+            out = []
+            if abs(b - a) > 0.25:
+                out.append("朝画面右边" if b > a else "朝画面左边")
+            if abs(db - da) > 0.8:
+                out.append("走远" if db > da else "朝镜头走近")
+            return "、".join(out)
+        t1, tm = t0 + s["dur"], t0 + s["dur"] / 2
+        names = [n2 for n2 in ([s.get("fg"), s.get("subject")] + list(s.get("who") or [])) if n2]
+        rows = []
+        byname = {p_["name"]: p_ for p_ in ppl}
+        for n2 in dict.fromkeys(names):
+            if n2 not in byname:
+                continue
+            (xa, da), (xm, dm), (xb, db) = (screen(at(byname[n2], t)) for t in (t0, tm, t1))
+            rows.append({"who": n2, "x": round(xm, 2), "side": side(xm), "near": "近处" if dm < 4 else ("远处" if dm > 12 else "中景处"), "move": move(xa, xb, da, db)})
+        crowd = [p_ for p_ in ppl if p_["name"].startswith("群演")]
+        cr = None
+        if crowd and s.get("crowd"):
+            ca = [screen(at(p_, t0)) for p_ in crowd]
+            cb = [screen(at(p_, t1)) for p_ in crowd]
+            xa = sum(x for x, _ in ca) / len(ca)
+            xb = sum(x for x, _ in cb) / len(cb)
+            cr = {"side": side((xa + xb) / 2), "move": move(xa, xb, 0, 0)}  # 人群只写左右
+        hz = cp[2] - (lk[2] if len(lk) > 2 else 1.5)
+        pitch = "高机位俯拍" if hz > 2.5 else ("低机位仰拍" if hz < -0.6 else "平视")
+        return {"people": rows, "crowd": cr, "pitch": pitch}
+
     def build(self, assets_idx):
         shots, t0 = [], 0.0
+        ppl_all = self.people()
         for k, s in enumerate(self.c["shots"], 1):
             cm = self.camera(s, t0)
             sh = dict(t0=round(t0, 3), t1=round(t0 + s["dur"], 3), name=s.get("name", f"镜{k}"), lens=cm["lens"], cam=cm, body=self.body(s, cm["lens"], t0))
@@ -1604,12 +1680,21 @@ class Clip:
                 object=s.get("object"), object_en=s.get("object_en"), hand=s.get("hand"), hand_en=s.get("hand_en"), view=s.get("view"),
                 action=[{"at": a.get("at"), "zh": a.get("text"), "en": a.get("en")} if isinstance(a, dict) else {"zh": a} for a in acts],
                 line=s.get("line"), sound=[{"zh": x.get("text"), "en": x.get("en"), "source": x.get("source")} for x in s.get("sound", []) if isinstance(x, dict)],
-                crowd=s.get("crowd"), beats=s.get("beats"), hit_en=(s.get("hit") or {}).get("en"), vfx_en=(s.get("vfx") or {}).get("en"), acting_en=(s.get("acting") or {}).get("leak_en"),
-                move=({"kind": s["move"]["kind"], "en": move_text(s["move"], "en")} if s.get("move") and s["move"].get("kind") in MOVES else None)).items() if v}  # 结构化镜头：可灵 / 海螺 / 万相的专用编译器用
+                crowd=s.get("crowd"), beats=s.get("beats"), hit_en=(s.get("hit") or {}).get("en"), vfx_en=(s.get("vfx") or {}).get("en"), acting_en=(s.get("acting") or {}).get("leak_en"), acting=(s.get("acting") or {}).get("leak"),
+                move=({"kind": s["move"]["kind"], "en": move_text(s["move"], "en"), "zh": move_text(s["move"])} if s.get("move") and s["move"].get("kind") in MOVES else None)).items() if v}  # 结构化镜头：海螺 / 万相的专用编译器用
+            poses = {n2: self.c["cast"][n2]["pose"] for n2 in dict.fromkeys([s.get("fg"), s.get("subject")] + list(s.get("who") or []))
+                     if n2 and self.c["cast"].get(n2, {}).get("pose")}
+            if poses:  # 这一镜画里每个人的姿势和状态；不喂白模时每镜都要重说一遍（《好日子》第 2 条：阿禾一镜站着盘发、一镜坐着披发）
+                sh["struct"]["poses"] = poses
+            try:
+                sh["struct"]["layout"] = self.layout(s, t0, cm, ppl_all)
+            except Exception as e:  # noqa: BLE001  算不出就不写
+                sh["struct"]["layout_err"] = str(e)[:80]
             shots.append(sh)
             t0 += s["dur"]
         c = self.c
-        cast = list(c["cast"])
+        hidden = {n: v["hidden"] for n, v in c["cast"].items() if v.get("hidden")}
+        cast = [n for n in c["cast"] if n not in hidden]
         world = self.loc["world"]
         tags = [f"@{n}" for n in cast] + [f"@prop_{p}" for p in c.get("props", [])] + [f"@loc_{c['location']}"]
         if f"@loc_{c['location']}_grid" in assets_idx:
@@ -1633,12 +1718,15 @@ class Clip:
             proxy_map.append({"name": p["name"], "tag": f"@{p['name']}", "color": PALETTE_ZH[ci],
                               "shape": "giant" if p.get("shape") == "giant" else ("cyl" if p.get("rig") is False else "rig")})
         return dict(n=c["n"], dur=round(t0, 3), title=c["title"], proxy_map=proxy_map, summary=c.get("summary", c["title"]), model=c.get("model", "Seedance 2.5 + 白模"),
-                    tags=tags, count=f"画面中始终只有 {len(cast)} 个有名字的角色：{brief}。{crowd_note}每一镜画面里有谁，以时间轴里\"画面里\"那一句为准。",
+                    tags=tags, count=f"画面中始终只有 {len(cast)} 个有名字的角色：{brief}。{crowd_note}"
+                    + "".join(f"{n}{h}，全程看不见，画面里不出现。" for n, h in hidden.items()) + "每一镜画面里有谁，以时间轴里\"画面里\"那一句为准。",
                     context=c.get("context", c.get("summary", "")) + (
                         f"这场对话里，{c['drama']['a']}；{c['drama']['b']}；第 {c['drama']['shift']} 镜那句话之后，局面反过来。" if c.get("drama") else ""), extra_chars=[], voices=speakers,
                     sfx=" ".join(f"<{x['text']}>" for s in c["shots"] for x in s.get("sound", [])) or "无",
                     constraint=axis_txt + c.get("constraint", "") + "".join(
                         f"道具操作（{p['name']}）：{p['mechanism']}。" for p in self.b.get("props", []) if p["name"] in c.get("props", []) and p.get("mechanism")), axis={"a": ots["fg"], "b": ots["subject"]} if ots else None,
+                    **({"blocking": c["blocking"]} if c.get("blocking") else {}),
+                    **({"poses": {n: v["pose"] for n, v in c["cast"].items() if v.get("pose") and n not in hidden}} if any(v.get("pose") for v in c["cast"].values()) else {}),
                     people=ppl, shots=shots, extra_boxes=self.proxies(), props_previs=self.props_previs(), effects_previs=self.effects_previs(), light_previs=self.light_previs(), fail=c.get("fail", "人物脸和服装与参考图不一致；画面出现文字。"),
                     risk=c.get("risk", "—"), splice=c.get("splice", "—"), summary_en=c.get("summary_en"),
                     style_en=self.style_en)
@@ -1663,7 +1751,7 @@ def voice_mode(proj):
 
 
 def sound_items(bible, board, voices="off"):
-    """每个场景一段环境底、可选配乐（后期铺底）；voices 不是 off 时，每个开口的角色再加一段音色参考（喂四家视频模型）。"""
+    """每个场景一段环境底、可选配乐（后期铺底）；voices 不是 off 时，每个开口的角色再加一段音色参考（喂三家视频模型）。"""
     cm = char_map(bible)
     lines, used = {}, {}
     for c in board.get("clips", []):
@@ -1681,7 +1769,7 @@ def sound_items(bible, board, voices="off"):
         txt = ch.get("voice_sample")
         if not txt:
             acc = ""
-            for t in lines[n]:  # 5–9 秒：可灵要求 ≥ 5 秒；海螺、万相总共只收 15 秒，三个人都要放得下
+            for t in lines[n]:  # 5–9 秒：海螺、万相总共只收 15 秒，三个人都要放得下
                 if len(SEP.sub("", acc)) >= 12 or len(SEP.sub("", acc + t)) > 24:
                     break
                 acc += ("" if not acc else "\n") + t
@@ -1719,7 +1807,7 @@ def build_sound(proj):
     items = sound_items(bible, board, voice_mode(proj))
     L = [f"# 《{bible['title']}》声音资产", "",
          "> 流水线生成，不要手改。环境底和配乐用本机 audio-studio 的 generate_audio（免费），**只在后期铺底**（`tools/post.py --ambience`），生成视频时不要配乐。",
-         "> **对白音色**默认交给视频模型按音色锁的文字自己出（用户实测：本地 TTS 像配音、会带方言腔，不如模型自带的自然）。只有 production.json 写 `voice_refs: \"user\"`（真人录音）或 `\"tts\"` 时才有音色参考，并喂给四家模型。",
+         "> **对白音色**默认交给视频模型按音色锁的文字自己出（用户实测：本地 TTS 像配音、会带方言腔，不如模型自带的自然）。只有 production.json 写 `voice_refs: \"user\"`（真人录音）或 `\"tts\"` 时才有音色参考，并喂给三家模型。",
          "> 生成后存成 48 kHz WAV 放到 `交付/` 下对应路径，再跑 run；流水线只做技术检查（时长、响度、削波），**真正好不好听要人听**。", "",
          "| 序 | 类型 | 名称 | 文件 | 用在 | 工具 |", "|---|---|---|---|---|---|"]
     kz = {"voice": "音色参考", "ambience": "环境底", "score": "配乐"}

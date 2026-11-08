@@ -248,7 +248,10 @@ def export(project_root, project, short, items, world_boxes, clips, texts, previ
                 "voices": [texts["VOICE"][v] for v in c.get("voices", [])], "lip": texts["LIP"], "shots": spec_shots,
                 "constraint": texts["ANCHOR"] + c["constraint"], "ban": "无", "long_take": "", "fail": c["fail"], "risk": c["risk"],
                 "splice": c["splice"]}
-        if "proxy_map" in c:  # 白模里每个代理是谁、白模长什么样（4.0 alpha.10，四家编译器共用，见 tools/compile/model_prompts.py previs_map）
+        for k2 in ("blocking", "poses"):  # 场面布局与人物状态（不喂白模的万相用，4.0 alpha.11）
+            if c.get(k2):
+                spec[k2] = c[k2]
+        if "proxy_map" in c:  # 白模里每个代理是谁、白模长什么样（4.0 alpha.10，三家编译器共用，见 tools/compile/model_prompts.py previs_map）
             spec["proxies"] = c["proxy_map"]
             spec["previs_look"] = {"lit": bool(c.get("light_previs")), "extras": any(p["name"].startswith("群演") for p in c["people"]),
                                    "props": bool(c.get("props_previs")), "effects": bool(c.get("effects_previs")),

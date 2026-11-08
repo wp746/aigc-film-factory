@@ -99,7 +99,21 @@
     ],
     "move": {
      "kind": "pull",
-     "en": "the camera pulls back slowly"
+     "en": "the camera pulls back slowly",
+     "zh": "镜头缓慢拉远"
+    },
+    "layout": {
+     "people": [
+      {
+       "who": "黑衣人",
+       "x": 0.42,
+       "side": "画面中间偏右",
+       "near": "近处",
+       "move": "朝画面右边、朝镜头走近"
+      }
+     ],
+     "crowd": null,
+     "pitch": "平视"
     }
    }
   },
@@ -128,6 +142,26 @@
     "line": {
      "who": "黑衣人",
      "text": "他不来了。"
+    },
+    "layout": {
+     "people": [
+      {
+       "who": "阿青_湿透",
+       "x": 0.52,
+       "side": "画面右侧",
+       "near": "近处",
+       "move": ""
+      },
+      {
+       "who": "黑衣人",
+       "x": -0.11,
+       "side": "画面中间",
+       "near": "近处",
+       "move": ""
+      }
+     ],
+     "crowd": null,
+     "pitch": "平视"
     }
    }
   },
@@ -157,6 +191,19 @@
      "text": "……不来了？",
      "delivery": "轻，回问",
      "delivery_en": "softly, echoing"
+    },
+    "layout": {
+     "people": [
+      {
+       "who": "阿青_湿透",
+       "x": 0.0,
+       "side": "画面中间",
+       "near": "近处",
+       "move": ""
+      }
+     ],
+     "crowd": null,
+     "pitch": "平视"
     }
    }
   }

@@ -12,7 +12,7 @@
   python3 tools/pipeline.py qc <项目目录> <第N条> <视频文件>   审片：切点、时长、分段音量、台词听写，写 logs/审片_第N条.md
   python3 tools/pipeline.py splice <项目目录> <第N条> <视频文件>  截这条视频的最后一帧到 交付/衔接/，下次 run 时接进下一条的投喂包（docs/07）
   python3 tools/pipeline.py coldread <项目目录> 故事|投喂前|成片   冷读任务书：交给一个不带上下文的子代理，写一页问题清单（templates/冷读.md）
-  python3 tools/pipeline.py model <项目目录> wan[,kling,...]     切换出片模型：只编这几家的投喂包，并打印这家的写法要点和验证状态（docs/13 八·六）
+  python3 tools/pipeline.py model <项目目录> wan[,hailuo,...]     切换出片模型：只编这几家的投喂包，并打印这家的写法要点和验证状态（docs/13 八·六）
 
 阶段（顺序固定）：confirm → assets → images → asset_review → stress（可选）→ specs → previs → check_spec → geometry → framesheets
 → previs_review → compile → report。规则和每一步的含义见 docs/18-自动化流水线.md。
@@ -53,9 +53,8 @@ def pj(proj):
 
 MODEL_ROUTE = {  # 每家的路由要点（docs/13）；验证状态如实写
     "seedance": "Seedance 2.5 全能参考，白模作 @视频1，中文时间轴；时长 4–30 整秒；已实拍（《天劫外包》第 1 条）。",
-    "kling": "可灵 4.0 全能参考（不是关键帧入口），白模作 @Video1，SHOT 清单硬切；时长 3–30 整秒，参考视频单个 ≥ 3 秒；未实拍，先出一条 720P Flash 样片。",
     "hailuo": "海螺 H3 Ref2VA，官方英文六段式，白模是 <Video 1> 的 weak_reference，人物是 <Subject N>；单段 4–15 秒、参考图 ≤ 9；未实拍，先出 768P 样片（或本地部署）。",
-    "wan": "万相 3.0 参考生视频，按官方'白模参考 / 渲染'写：保持不变 + 逐个代理写实化；单段 ≤ 15 秒、参考图 ≤ 10、prompt_extend 关；未实拍，先出 480P 样片。",
+    "wan": "万相 3.0 参考生视频，默认只传图、不喂白模（2026-11-09 用户决定）：每个分镜写景别、焦段、俯仰、一个运镜、谁在画面左右、姿势，动作写整段的绝对秒数，台词写\"图N（某某）说\"；单条 2–30 秒、参考图 ≤ 10、prompt_extend 关；production.json 写 \"wan_previs\": true 才喂白模（单段 ≤ 15 秒，白模秒数也计费）；未实拍，先出 480P 样片。",
 }
 
 
@@ -636,6 +635,7 @@ def st_compile(proj, d):
     prev = (d["pipeline"].get("compile") or {}).get("packs") or d.get("packs_last") or {}
     if d.get("seedance_api_model"):  # 例：doubao-seedance-2-0-mini-260615（便宜档，docs/13 第八·四节）
         os.environ["SEEDANCE_API_MODEL"] = d["seedance_api_model"]
+    os.environ["WAN_PREVIS"] = "1" if d.get("wan_previs") else "0"  # 万相默认不喂白模（2026-11-09 用户决定）
     for m in d["video_models"]:
         r = run([PY, "-I", os.path.join(TOOLS, "compile", "compile_video.py"), os.path.join(proj, "交付", "规格单"), "--model", m], check=False)
         fails += [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
@@ -898,7 +898,7 @@ def cmd_selftest(example, update=False):
     proj = os.path.join(tmp, os.path.basename(example))
     shutil.copytree(example, proj, ignore=shutil.ignore_patterns("标准产物", "production.json", "交付", "logs", "预演规格"))
     d = load(proj)
-    d.update(selftest=True, stress_test=True, project=os.path.basename(example), video_models=["seedance", "kling", "hailuo", "wan"])
+    d.update(selftest=True, stress_test=True, project=os.path.basename(example), video_models=["seedance", "hailuo", "wan"])
     d["confirm"] = {"story": "selftest", "script": "selftest"}
     save(proj, d)
     print(f"自测目录：{proj}")
@@ -939,7 +939,7 @@ def cmd_selftest(example, update=False):
         print(f"✗ 自测不一致：{len(bad)} 个文件和标准产物不同\n  " + "\n  ".join(bad[:20]) +
               f"\n用 diff 对比：{proj}/<文件> 和 {gold}/<文件>。框架代码改了且确认新产物正确时，才用 `selftest <样例> --update` 更新标准。")
         return 1
-    print(f"✓ 自测通过：{len(files)} 个产物和标准逐字一致（资产文档、规格单、四个模型的提示词与界面参数）。这台机器、这个智能体可以正式生产。")
+    print(f"✓ 自测通过：{len(files)} 个产物和标准逐字一致（资产文档、规格单、三个模型的提示词与界面参数）。这台机器、这个智能体可以正式生产。")
     return 0
 
 
@@ -1010,7 +1010,7 @@ def main():
         want = [m.strip() for x in a.args for m in x.split(",") if m.strip()]
         bad = [m for m in want if m not in MODEL_ROUTE]
         if not want or bad:
-            sys.exit("模型只能是：" + " / ".join(MODEL_ROUTE) + "，可以用逗号连写，如 wan,kling")
+            sys.exit("模型只能是：" + " / ".join(MODEL_ROUTE) + "，可以用逗号连写，如 wan,hailuo")
         d = load(proj)
         d["video_models"] = want
         d["pipeline"].pop("compile", None)
@@ -1023,7 +1023,7 @@ def main():
         title = a.args[0] if a.args else os.path.basename(proj)
         os.makedirs(os.path.join(proj, "logs"), exist_ok=True)
         d = load(proj)
-        d.update(project=title, video_models=d.get("video_models") or ["seedance", "kling", "hailuo", "wan"])
+        d.update(project=title, video_models=d.get("video_models") or ["seedance", "hailuo", "wan"])
         save(proj, d)
         lx = os.path.join(proj, "00-立项书.md")
         if not os.path.exists(lx):

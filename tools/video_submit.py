@@ -7,7 +7,7 @@
   可选 --url-map urls.json：本地文件 → 公网 URL 的对照（参考视频在方舟和百炼只能用公网 URL）
 
 密钥只从环境变量或 .env 读：ARK_API_KEY；MINIMAX_API_KEY；DASHSCOPE_API_KEY + WAN_BASE_URL（形如
-https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com）。可灵 4.0 的官方 API 字段尚未核实，先用网页出片。
+https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com）。
 付费：每次提交都计费，工厂规则要求用户确认费用后才加 --confirm。
 """
 import argparse
@@ -23,7 +23,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PRICE_NOTE = {"seedance": "以火山方舟控制台计费为准（Seedance 2.5 按秒和分辨率计费）",
               "hailuo": "以 MiniMax 控制台计费为准（H3 只有按量付费）",
-              "wan": "约 0.10 美元/秒（720P）、0.20 美元/秒（1080P），以百炼控制台为准"}
+              "wan": "约 ¥0.30/秒（480P）、¥0.60/秒（720P）、¥1.20/秒（1080P），带参考视频时白模秒数也计费；第三方转述，以百炼账单为准"}
 
 
 def load_env():
@@ -119,7 +119,7 @@ def main():
     load_env()
     model = model_of(a.pack)
     if model not in PRICE_NOTE:
-        sys.exit("可灵 4.0 的官方 API 字段尚未核实：请在可灵网页用这个投喂包手动出片")
+        sys.exit(f"不支持的模型：{model}（只支持 Seedance 2.5 / 海螺 H3 / 万相 3.0）")
     req = json.load(open(os.path.join(a.pack, "api_request.json"), encoding="utf-8"))
     dur = req.get("duration") or req.get("parameters", {}).get("duration")
     print(f"模型：{model}　时长：{dur} 秒　费用：{PRICE_NOTE[model]}")
