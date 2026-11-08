@@ -93,6 +93,27 @@
  "fail": "人物脸和服装与参考图不一致；画面出现文字。",
  "risk": "—",
  "splice": "出口：硬切片名。",
+ "proxies": [
+  {
+   "name": "阿青",
+   "tag": "@阿青",
+   "color": "黄",
+   "shape": "rig"
+  },
+  {
+   "name": "黑衣人",
+   "tag": "@黑衣人",
+   "color": "红",
+   "shape": "rig"
+  }
+ ],
+ "previs_look": {
+  "lit": true,
+  "extras": false,
+  "props": false,
+  "effects": false,
+  "hands": false
+ },
  "axis": {
   "a": "阿青",
   "b": "黑衣人"

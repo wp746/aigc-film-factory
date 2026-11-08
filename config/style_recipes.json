@@ -1,5 +1,5 @@
 {
- "_说明": "风格配方库（2026-11-02 修订：去掉全部颗粒/噪点/毛孔词，改成干净无噪点，见 docs/16 第二节）：从用户的 MJ 码图库（config/mj_style_library.json）提炼，已翻成 Image 2.5 / Nano Banana 2 / Seedance 都能读的英文描述，不含任何 MJ 参数或风格码。用法见 docs/16-MJ风格库.md 第三、四节；查询 python3 -I tools/mj_style.py --recipe R03。",
+ "_说明": "风格配方库（2026-11-02 修订：去掉全部颗粒/噪点/毛孔词，改成干净无噪点，见 docs/16 第二节）：从用户的 MJ 码图库（config/mj_style_library.json）提炼，已翻成 Image 2.5 / Nano Banana 2 / Seedance 都能读的英文描述，不含任何 MJ 参数或风格码。用法见 docs/16-MJ风格库.md 第三、四节；查询 python3 -I tools/mj_style.py --recipe R03。 video_zh / video_en（4.0 alpha.10）：进视频提示词的版本，只写光、色、质感和情绪；zh / en 里给出风格样图用的构图和画面内容（极小的人、巨大暗影、巨物占三分之二……）不进视频，否则每一镜都会凭空多出人和东西。",
  "配方": [
   {
    "id": "R01",
@@ -47,7 +47,9 @@
    "来源": "s87 s229 s238 s25",
    "适合": "天宫、云海、宏大建筑、开场大全景",
    "en": "photoreal epic wide shot, 14-24mm; an endless sea of clouds; colossal ancient Chinese palace architecture fading layer by layer into mist; a tiny solitary figure in the foreground for scale; soft diffuse sunlight through haze; pale jade-grey or warm gold atmosphere; strong atmospheric perspective",
-   "zh": "近真人的史诗大全景，14–24 毫米广角；无边云海；巨大的中国古建筑一层层没入雾里；前景一个极小的人作尺度；柔和的漫射阳光穿过薄雾；淡青灰或暖金的空气；空气透视很强"
+   "zh": "近真人的史诗大全景，14–24 毫米广角；无边云海；巨大的中国古建筑一层层没入雾里；前景一个极小的人作尺度；柔和的漫射阳光穿过薄雾；淡青灰或暖金的空气；空气透视很强",
+   "video_zh": "近真人的东方奇观质感；柔和的漫射阳光穿过薄雾；淡青灰或暖金的空气；空气透视很强",
+   "video_en": "photoreal Eastern epic look; soft diffuse sunlight through haze; pale jade-grey or warm gold atmosphere; strong atmospheric perspective"
   },
   {
    "id": "R07",
@@ -95,7 +97,9 @@
    "来源": "c198",
    "适合": "超现实喜剧、冷静人物对灾难场面",
    "en": "surreal staged photograph that looks real; plain flat daylight; a calm, ordinary person doing something mundane next to an absurd disaster; beige landscape against black smoke and orange fire; centered, deadpan composition; documentary sharpness",
-   "zh": "看起来像真的超现实摆拍；平淡的日光；一个冷静普通的人在荒唐灾难旁做一件日常小事；米黄的环境对黑烟和橙色火焰；居中、面无表情的构图；纪实般清晰"
+   "zh": "看起来像真的超现实摆拍；平淡的日光；一个冷静普通的人在荒唐灾难旁做一件日常小事；米黄的环境对黑烟和橙色火焰；居中、面无表情的构图；纪实般清晰",
+   "video_zh": "看起来像真的超现实摆拍；平淡的日光；米黄、灰白的低饱和底色，只有事件本身带出强烈的颜色；纪实般清晰",
+   "video_en": "surreal staged photograph that looks real; plain flat daylight; muted beige and off-white base palette, strong color only where the event itself brings it; documentary sharpness"
   },
   {
    "id": "R13",
@@ -111,7 +115,9 @@
    "来源": "c40 c84",
    "适合": "志怪、悲剧、哀伤特写",
    "en": "realistic cinematic portrait in fog; misty blue-grey, ivory and dark gold palette; flat foggy daylight with soft low contrast; a looming dark shape barely visible in the haze behind; cold rain-wet skin; restrained grief",
-   "zh": "雾中的写实电影人像；雾灰蓝、米白和暗金配色；雾天平光，柔和低反差；身后雾里隐约有一个巨大的暗影；被冷雨打湿的皮肤；克制的哀伤"
+   "zh": "雾中的写实电影人像；雾灰蓝、米白和暗金配色；雾天平光，柔和低反差；身后雾里隐约有一个巨大的暗影；被冷雨打湿的皮肤；克制的哀伤",
+   "video_zh": "雾中的写实电影质感；雾灰蓝、米白和暗金配色；雾天平光，柔和低反差；湿冷的空气；克制的哀伤",
+   "video_en": "realistic cinematic look in fog; misty blue-grey, ivory and dark gold palette; flat foggy daylight with soft low contrast; cold damp air; restrained grief"
   },
   {
    "id": "R15",
@@ -119,7 +125,9 @@
    "来源": "j27 j31 j57",
    "适合": "巨兽、巨人、巨型建筑对人",
    "en": "photoreal epic composition; an immense being or structure filling two thirds of the frame; a tiny human figure seen from behind for scale; thick clouds and atmospheric haze between layers; light coming from behind the giant; awe and dread",
-   "zh": "近真人的史诗构图；巨大的生物或建筑占画面三分之二；一个极小的人背对镜头作尺度；层层厚云和空气雾；光从巨物身后来；敬畏和恐惧"
+   "zh": "近真人的史诗构图；巨大的生物或建筑占画面三分之二；一个极小的人背对镜头作尺度；层层厚云和空气雾；光从巨物身后来；敬畏和恐惧",
+   "video_zh": "近真人的史诗质感；层层厚云和空气雾拉开纵深；逆光和侧逆光；敬畏和恐惧",
+   "video_en": "photoreal epic look; thick clouds and atmospheric haze separating the depth layers; backlight and side-backlight; awe and dread"
   },
   {
    "id": "R16",
@@ -151,7 +159,9 @@
    "来源": "类型片库 G01（文字配方，未出试图）",
    "适合": "科幻巨物、荒漠、巨型建筑、静默",
    "en": "photoreal epic science-fiction still, near live-action; vast brutalist monolithic architecture rising out of empty desert or fog; monochrome palette of sand, ash and slate grey with one muted accent color; soft light from the side and behind, diffused through thick haze; a tiny human figure for scale; wide, still, austere composition; clean, noise-free image with smooth shadow gradients",
-   "zh": "近真人的史诗科幻；巨大的粗野主义单体建筑从荒漠或浓雾里升起；沙色、灰烬色、石板灰的单色调，只有一个低饱和点缀色；侧后方的光穿过浓雾，柔和；画面里一个极小的人做尺度参照；宽、静、克制的构图；画面干净，暗部过渡平滑"
+   "zh": "近真人的史诗科幻；巨大的粗野主义单体建筑从荒漠或浓雾里升起；沙色、灰烬色、石板灰的单色调，只有一个低饱和点缀色；侧后方的光穿过浓雾，柔和；画面里一个极小的人做尺度参照；宽、静、克制的构图；画面干净，暗部过渡平滑",
+   "video_zh": "近真人的史诗科幻质感；沙色、灰烬色、石板灰的单色调，只有一个低饱和点缀色；侧后方的光穿过浓雾，柔和；静、克制；画面干净，暗部过渡平滑",
+   "video_en": "photoreal epic science-fiction look, near live-action; monochrome palette of sand, ash and slate grey with one muted accent color; soft light from the side and behind, diffused through thick haze; still and austere; clean, noise-free image with smooth shadow gradients"
   },
   {
    "id": "R20",
@@ -191,7 +201,9 @@
    "来源": "类型片库 G07（文字配方，未出试图）",
    "适合": "日常空间里的恐怖、走廊、空房间",
    "en": "cinematic photoreal still; ordinary rooms and corridors framed wide and static with large empty dark areas; dim grey-green ambient light; a curtain moving slightly; a figure small or half-hidden at the edge of frame; muted, quiet, uncanny; clean, noise-free image",
-   "zh": "近真人的电影写实；普通的房间和走廊，宽而固定的画面里留着大片空的暗处；昏暗的灰绿色环境光；窗帘轻轻动；一个人很小，或半藏在画面边缘；安静、压抑、说不出哪里不对；画面干净"
+   "zh": "近真人的电影写实；普通的房间和走廊，宽而固定的画面里留着大片空的暗处；昏暗的灰绿色环境光；窗帘轻轻动；一个人很小，或半藏在画面边缘；安静、压抑、说不出哪里不对；画面干净",
+   "video_zh": "近真人的电影写实；大片空的暗处；昏暗的灰绿色环境光；安静、压抑、说不出哪里不对；画面干净",
+   "video_en": "cinematic photoreal look; large empty dark areas; dim grey-green ambient light; muted, quiet, uncanny; clean, noise-free image"
   },
   {
    "id": "R25",

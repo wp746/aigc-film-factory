@@ -203,6 +203,27 @@
  "fail": "人物脸和服装与参考图不一致；画面出现文字。",
  "risk": "—",
  "splice": "出口：烟盒放在台面上。",
+ "proxies": [
+  {
+   "name": "阿青",
+   "tag": "@阿青",
+   "color": "黄",
+   "shape": "rig"
+  },
+  {
+   "name": "老周",
+   "tag": "@老周",
+   "color": "蓝",
+   "shape": "rig"
+  }
+ ],
+ "previs_look": {
+  "lit": true,
+  "extras": false,
+  "props": false,
+  "effects": false,
+  "hands": true
+ },
  "axis": {
   "a": "阿青",
   "b": "老周"

@@ -19,6 +19,7 @@
 """
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -211,8 +212,9 @@ def shot_line(model, sh, t0, idx):
 
 
 def previs_duty(model, spec, vref):
+    desc, rows, _ = MP.previs_map(spec, MP.ref_lookup(spec["assets"], lambda i, a: ref_name(model, "image", i)))
     return (f"{vref} 是本条的白模预演，只提供镜头路线、切点、构图、空间布局、人物整体位置与路线、事件先后；"
-            f"外形、识别色、灰色无材质画面和中性光都不继承。识别色：{spec['previs_colors']}。")
+            f"外形、识别色、方块和白模的光都不继承。{desc}。逐个对应：" + "；".join(rows) + "。")
 
 
 def build_prompt(spec, model, style, part):
@@ -325,6 +327,35 @@ def audio_upload(spec, model):
     return [f"音色参考：最后上传 {names}；{tip}。只取音色，不取内容"]
 
 
+ASSET_RANK = {"character": 0, "giant": 0, "scene": 1, "crowd": 1, "first": 2, "tail": 2, "human_view": 3, "prop": 3}
+
+
+def fit_assets(assets, cap):
+    """参考图超过这家的上限时，先丢多视角宫格、道具，再丢其他；人物和巨物最后丢。返回 (留下的, 丢掉的)，留下的保持原顺序。"""
+    if len(assets) <= cap:
+        return assets, []
+    rank = lambda a: 3.5 if str(a.get("tag", "")).endswith("_grid") else ASSET_RANK.get(a["kind"], 3)  # noqa: E731
+    order = sorted(range(len(assets)), key=lambda i: (rank(assets[i]), i))
+    keep = sorted(order[:cap])
+    return [assets[i] for i in keep], [assets[i] for i in sorted(order[cap:])]
+
+
+def pad_video(path, secs):
+    """白模末尾补静帧到整数秒（四家的时长都是整秒）。"""
+    tmp = path + ".pad.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", path, "-vf", f"tpad=stop_mode=clone:stop_duration={secs:.3f}", "-c:v", "libx264",
+                    "-crf", "18", "-pix_fmt", "yuv420p", "-an", tmp], check=True)
+    os.replace(tmp, path)
+
+
+def hold_line(model, dur, gen):
+    pad = gen - dur
+    if model == "hailuo":
+        return (f"From {MP.mmss(dur)} to {MP.mmss(gen)}, the last shot holds its final framing: the people only breathe and blink, "
+                "and the camera stays still (this tail is trimmed in editing).")
+    return f"{fmt(dur)}–{gen} 秒：保持上一镜结束时的画面，人物只有呼吸和眨眼，镜头不动（这 {fmt(pad)} 秒剪辑时剪掉）。"
+
+
 def compile_one(spec, model, style, out_root):
     lim = LIMITS[model]
     base = spec["_dir"]
@@ -354,12 +385,14 @@ def compile_one(spec, model, style, out_root):
     for k, part in enumerate(parts, 1):
         t0, t1, shots = part
         spec = whole if k == 1 else dict(whole, assets=[a for a in whole["assets"] if a["kind"] != "first"])
+        fitted, dropped = fit_assets(spec["assets"], lim["images"])
+        spec = dict(spec, assets=fitted)  # 提示词里的图号和真正上传的图一致（以前多出来的图被截掉，提示词还在引用）
         name = f"第{spec['clip']}条" + (f"_{k}" if len(parts) > 1 else "")
         d = os.path.join(out_root, model, name)
         if os.path.isdir(d):
             shutil.rmtree(d)
         os.makedirs(d)
-        assets = spec["assets"][:lim["images"]]
+        assets = spec["assets"]
         files = []
         for i, a in enumerate(assets, 1):
             src = os.path.join(base, a["file"])
@@ -382,18 +415,35 @@ def compile_one(spec, model, style, out_root):
             shutil.copy2(previs, video)
         else:
             cut_video(previs, video, t0, t1)
+        dur = round(t1 - t0, 3)
+        gen = max(math.ceil(dur - 1e-6), LIMITS[model]["dur"][0])  # 四家的时长都按整秒：小数秒的条向上补齐，白模末尾补静帧
+        if gen > dur and os.path.exists(video):
+            pad_video(video, gen - dur)
         notes = []
+        if dropped:
+            gone = [a["name"] for a in dropped]
+            lost = [a["name"] for a in dropped if a["kind"] in ("character", "giant")]
+            notes.append(("FAIL" if lost else "WARN") + f"  参考图超过 {lim['images']} 张上限，没放进来：{'、'.join(gone)}"
+                         + (f"；其中人物 {'、'.join(lost)} 在白模里有代理却没有参考图，会被画成纯色小人：拆条、减人，或换参考图多的模型" if lost else ""))
         if model == "seedance":
             prompt = build_prompt(spec, model, style, part)
         else:
             prompt, fallback = MP.BUILD[model](spec, part, short_duty)
             if fallback:
                 notes.append(f"WARN  镜头 {fallback} 没有结构化数据（项目不是 设定.json + 分镜.json 写的），这几镜退回中文正文，不是{lim['名称']}官方格式；改用 docs/19 的数据格式可得到完整官方格式")
+        if gen > dur:  # 补的静帧写进时间轴的最后（各家时间轴后面那一段的开头作锚点）
+            mark = {"seedance": "\n\n【声音】", "kling": "\n\n[Audio", "hailuo": "\n\noverall_soundscape", "wan": "\n\n台词："}[model]
+            i = prompt.find(mark)
+            prompt = (prompt[:i] + "\n" + hold_line(model, dur, gen) + prompt[i:]) if i >= 0 else prompt + "\n" + hold_line(model, dur, gen)
+            notes.append(f"INFO  本段 {fmt(dur)} 秒，模型只收整秒：按 {gen} 秒出，白模末尾补了 {fmt(gen - dur)} 秒静帧；后期粗剪按分镜时长自动剪掉")
+        missing_proxy = MP.previs_map(spec, MP.ref_lookup(spec["assets"], lambda i, a: f"图{i}"))[2]
+        if missing_proxy:
+            notes.append(f"FAIL  白模里的 {'、'.join(missing_proxy)} 没有对应的参考图，模型会把代理原样画出来")
         open(os.path.join(d, "提示词.txt"), "w", encoding="utf-8").write(prompt + "\n")
-        open(os.path.join(d, "界面参数.txt"), "w", encoding="utf-8").write(ui_params(spec, model, t1 - t0, len(files)) + "".join(x + "\n" for x in audio_upload(spec, model)))
-        json.dump(api_request(spec, model, prompt, files, video, t1 - t0), open(os.path.join(d, "api_request.json"), "w", encoding="utf-8"),
+        open(os.path.join(d, "界面参数.txt"), "w", encoding="utf-8").write(ui_params(spec, model, gen, len(files)) + "".join(x + "\n" for x in audio_upload(spec, model)))
+        json.dump(api_request(spec, model, prompt, files, video, gen), open(os.path.join(d, "api_request.json"), "w", encoding="utf-8"),
                   ensure_ascii=False, indent=1)
-        chk = check_limits(spec, model, prompt, t1 - t0, len(spec["assets"]), style) + notes + anotes + (tail_note if k == 1 else [])
+        chk = check_limits(spec, model, prompt, gen, len(spec["assets"]), style) + notes + anotes + (tail_note if k == 1 else [])
         if auds:
             chk.append(f"PASS  音色参考 {len(auds)} 段，共 {sum(a['secs'] for a in auds):.1f} 秒（{'、'.join(a['name'] for a in auds)}）")
         missing = [a["file"] for a in assets if not os.path.exists(os.path.join(base, a["file"]))]

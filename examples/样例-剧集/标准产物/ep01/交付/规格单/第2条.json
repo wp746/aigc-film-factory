@@ -126,6 +126,27 @@
  "fail": "人物脸和服装与参考图不一致；画面出现文字。",
  "risk": "—",
  "splice": "出口：阿青看着门口。",
+ "proxies": [
+  {
+   "name": "阿青",
+   "tag": "@阿青",
+   "color": "黄",
+   "shape": "rig"
+  },
+  {
+   "name": "黑衣人_背影",
+   "tag": "@黑衣人_背影",
+   "color": "红",
+   "shape": "rig"
+  }
+ ],
+ "previs_look": {
+  "lit": true,
+  "extras": false,
+  "props": false,
+  "effects": false,
+  "hands": false
+ },
  "style_en": "Setting look: cinematic 35mm footage; a warm amber practical light source on the subject against a cold blue glow in the background; strong warm-cold color separation; volumetric haze catching the light; shallow depth of field; deep low-key shadows; soft glow around highlights; clean, noise-free image. People look: cinematic footage shot on a 35mm lens; dusk blue-grey ambient light with a faint warm orange rim from behind; low contrast; long-lens compression and shallow depth of field; natural, realistic skin with subtle texture and a soft natural sheen, not retouched and not over-sharpened; restrained, unposed expression; clean, noise-free image.",
  "summary_en": "A man in a long black coat stands outside the glass door with his back to the shop and never comes in.",
  "music_en": "N/A"

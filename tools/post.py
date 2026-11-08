@@ -310,6 +310,9 @@ def main(argv=None):
         dur, frames, fps, has_a = probe(f)
         start = a.head / fps
         end = max(start + 0.5, dur - a.tail / fps)
+        plan_d = sum(s.get("dur", 0) for s in (clips.get(n) or {}).get("shots", []))
+        if plan_d and 0.05 < dur - plan_d < 1.05:  # 小数秒的条按整秒出片，末尾是补的静帧（compile_video.py，4.0 alpha.10）：剪回分镜时长
+            end = min(end, plan_d)
         vf = (f"trim=start={start:.4f}:end={end:.4f},setpts=PTS-STARTPTS,fps={FPS},"
               f"scale={W}:{H}:flags=lanczos:in_color_matrix=bt601:out_color_matrix=bt709,unsharp=5:5:0.4,setsar=1")
         if a.hold:

@@ -12,6 +12,7 @@
   python3 tools/pipeline.py qc <项目目录> <第N条> <视频文件>   审片：切点、时长、分段音量、台词听写，写 logs/审片_第N条.md
   python3 tools/pipeline.py splice <项目目录> <第N条> <视频文件>  截这条视频的最后一帧到 交付/衔接/，下次 run 时接进下一条的投喂包（docs/07）
   python3 tools/pipeline.py coldread <项目目录> 故事|投喂前|成片   冷读任务书：交给一个不带上下文的子代理，写一页问题清单（templates/冷读.md）
+  python3 tools/pipeline.py model <项目目录> wan[,kling,...]     切换出片模型：只编这几家的投喂包，并打印这家的写法要点和验证状态（docs/13 八·六）
 
 阶段（顺序固定）：confirm → assets → images → asset_review → stress（可选）→ specs → previs → check_spec → geometry → framesheets
 → previs_review → compile → report。规则和每一步的含义见 docs/18-自动化流水线.md。
@@ -48,6 +49,14 @@ class Stop(Exception):
 
 def pj(proj):
     return os.path.join(proj, "production.json")
+
+
+MODEL_ROUTE = {  # 每家的路由要点（docs/13）；验证状态如实写
+    "seedance": "Seedance 2.5 全能参考，白模作 @视频1，中文时间轴；时长 4–30 整秒；已实拍（《天劫外包》第 1 条）。",
+    "kling": "可灵 4.0 全能参考（不是关键帧入口），白模作 @Video1，SHOT 清单硬切；时长 3–30 整秒，参考视频单个 ≥ 3 秒；未实拍，先出一条 720P Flash 样片。",
+    "hailuo": "海螺 H3 Ref2VA，官方英文六段式，白模是 <Video 1> 的 weak_reference，人物是 <Subject N>；单段 4–15 秒、参考图 ≤ 9；未实拍，先出 768P 样片（或本地部署）。",
+    "wan": "万相 3.0 参考生视频，按官方'白模参考 / 渲染'写：保持不变 + 逐个代理写实化；单段 ≤ 15 秒、参考图 ≤ 10、prompt_extend 关；未实拍，先出 480P 样片。",
+}
 
 
 def load(proj):
@@ -969,7 +978,7 @@ def cmd_status(proj):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["status", "run", "confirm", "approve", "review", "redo", "init", "new", "selftest", "qc", "splice", "episode", "coldread"])
+    ap.add_argument("cmd", choices=["status", "run", "confirm", "approve", "review", "redo", "init", "new", "selftest", "qc", "splice", "episode", "coldread", "model"])
     ap.add_argument("project")
     ap.add_argument("args", nargs="*")
     ap.add_argument("--until", choices=STAGES)
@@ -996,6 +1005,19 @@ def main():
         os.makedirs(os.path.dirname(out), exist_ok=True)
         open(out, "w", encoding="utf-8").write(brief + "\n")
         print(brief + f"\n\n（任务书已写到 {os.path.relpath(out, ROOT)}。派一个全新的子代理，只把这份任务书给它；它写完后在报告里看结论。）")
+        return 0
+    if a.cmd == "model":  # 切换出片模型（4.0 alpha.10）：改 video_models，compile 阶段下次 run 重编
+        want = [m.strip() for x in a.args for m in x.split(",") if m.strip()]
+        bad = [m for m in want if m not in MODEL_ROUTE]
+        if not want or bad:
+            sys.exit("模型只能是：" + " / ".join(MODEL_ROUTE) + "，可以用逗号连写，如 wan,kling")
+        d = load(proj)
+        d["video_models"] = want
+        d["pipeline"].pop("compile", None)
+        save(proj, d)
+        for m in want:
+            print(f"■ {m}：{MODEL_ROUTE[m]}")
+        print("已切换。下一步：python3 tools/pipeline.py run " + os.path.relpath(proj, ROOT) + "（只重编投喂包，不重出图和白模）")
         return 0
     if a.cmd == "new":  # 单片 JSON 模式建项目（docs/18）：production.json + 立项书模板 + logs
         title = a.args[0] if a.args else os.path.basename(proj)

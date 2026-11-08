@@ -520,6 +520,13 @@ def validate(bible, board, models=("seedance",)):
     all_shots = [s for c in board.get("clips", []) for s in c.get("shots", [])]
     if all_shots and all(s.get("line") for s in all_shots):
         W.append("全片每一镜都有台词：至少留一段不靠台词、只用画面和声音讲的戏（docs/20 第二节第 5 条）")
+    img_cap = {"seedance": 30, "kling": 10, "hailuo": 9, "wan": 10}  # 各家参考图上限（docs/13）
+    for c in board.get("clips", []):  # 白模里的每个人都要有参考图，否则模型会把代理原样画出来（4.0 alpha.10，万相实拍教训）
+        people_n = sum(1 for n in c.get("cast", {}) if chars.get(n, {}).get("kind") != "voice")
+        need = people_n + 1 + (1 if any(s.get("crowd") for s in c.get("shots", [])) else 0)
+        for m in models:
+            if m in img_cap and need > img_cap[m]:
+                W.append(f"第{c.get('n')}条 有 {people_n} 个人加场景图，{m} 最多收 {img_cap[m]} 张参考图：多出来的人在白模里有代理却没有图，会被画成纯色小人；拆条或减人（docs/13 八·六）")
     script_check(bible, board, E, W)
     action_check(board, W)
     look_check(bible, board, E, W)
@@ -1617,14 +1624,22 @@ class Clip:
         crowd_note = f"另有{world}群演，按编号取自群像。" if "@crowd_" + world in tags else ""
         ots = next((s for s in c["shots"] if s["type"] == "ots"), None)
         axis_txt = f"{ots['fg']}和{ots['subject']}对话的轴线固定，整场不换边；" if ots else ""
-        return dict(n=c["n"], dur=round(t0, 3), title=c["title"], summary=c.get("summary", c["title"]), model=c.get("model", "Seedance 2.5 + 白模"),
+        ppl = self.people()
+        proxy_map = []  # 白模里每个代理是谁（4.0 alpha.10）：编译器按它逐个写"紫色关节小人 → 图5「某某」"，不让模型猜
+        for p in ppl:
+            if p["name"].startswith("群演") or p["name"] not in self.chars:
+                continue
+            ci = PALETTE.index(p["color"]) if p["color"] in PALETTE else 0
+            proxy_map.append({"name": p["name"], "tag": f"@{p['name']}", "color": PALETTE_ZH[ci],
+                              "shape": "giant" if p.get("shape") == "giant" else ("cyl" if p.get("rig") is False else "rig")})
+        return dict(n=c["n"], dur=round(t0, 3), title=c["title"], proxy_map=proxy_map, summary=c.get("summary", c["title"]), model=c.get("model", "Seedance 2.5 + 白模"),
                     tags=tags, count=f"画面中始终只有 {len(cast)} 个有名字的角色：{brief}。{crowd_note}每一镜画面里有谁，以时间轴里\"画面里\"那一句为准。",
                     context=c.get("context", c.get("summary", "")) + (
                         f"这场对话里，{c['drama']['a']}；{c['drama']['b']}；第 {c['drama']['shift']} 镜那句话之后，局面反过来。" if c.get("drama") else ""), extra_chars=[], voices=speakers,
                     sfx=" ".join(f"<{x['text']}>" for s in c["shots"] for x in s.get("sound", [])) or "无",
                     constraint=axis_txt + c.get("constraint", "") + "".join(
                         f"道具操作（{p['name']}）：{p['mechanism']}。" for p in self.b.get("props", []) if p["name"] in c.get("props", []) and p.get("mechanism")), axis={"a": ots["fg"], "b": ots["subject"]} if ots else None,
-                    people=self.people(), shots=shots, extra_boxes=self.proxies(), props_previs=self.props_previs(), effects_previs=self.effects_previs(), light_previs=self.light_previs(), fail=c.get("fail", "人物脸和服装与参考图不一致；画面出现文字。"),
+                    people=ppl, shots=shots, extra_boxes=self.proxies(), props_previs=self.props_previs(), effects_previs=self.effects_previs(), light_previs=self.light_previs(), fail=c.get("fail", "人物脸和服装与参考图不一致；画面出现文字。"),
                     risk=c.get("risk", "—"), splice=c.get("splice", "—"), summary_en=c.get("summary_en"),
                     style_en=self.style_en)
 
@@ -1790,8 +1805,10 @@ def build_specs(proj):
         rz = {r["id"]: r for r in json.load(open(os.path.join(ROOT, "config", "style_recipes.json"), encoding="utf-8"))["配方"]}  # 每条只写本条所在世界的质感（docs/16）
         wr = bible["worlds"][world]["recipe"]
         pr = bible["worlds"][world].get("people", bible["people_recipe"])  # 世界可以覆盖人物配方；和世界相同就只写一次
-        cl.style_en = f"Setting look: {vid(en[world])}." + (f" People look: {vid(rz[pr]['en'])}." if rz[pr]["en"] != en[world] else "")
-        style_zh = f"质感：{world}（{wr}）：{rz[wr]['zh']}" + (f"；人物（{pr}）：{rz[pr]['zh']}。" if pr != wr else "。")
+        ve = lambda r: r.get("video_en", r["en"])  # noqa: E731  视频只用配方的"质感版"：出图样片里的构图和画面内容（极小的人、巨大暗影……）不进视频（4.0 alpha.10）
+        vz = lambda r: r.get("video_zh", r["zh"])  # noqa: E731
+        cl.style_en = f"Setting look: {vid(ve(rz[wr]))}." + (f" People look: {vid(ve(rz[pr]))}." if ve(rz[pr]) != ve(rz[wr]) else "")
+        style_zh = f"质感：{world}（{wr}）：{vz(rz[wr])}" + (f"；人物（{pr}）：{vz(rz[pr])}。" if pr != wr else "。")
         clips.append(cl.build(idx))
         clips[-1]["style_zh"] = style_zh
         cm = char_map(bible)

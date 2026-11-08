@@ -20,7 +20,65 @@ TYPE_EN = {"wide": "wide shot", "single": "single shot", "ots": "over-the-should
            "track": "tracking shot", "pov": "point-of-view shot"}
 MOVE_EN = {"wide": "static camera", "single": "static camera", "ots": "static camera", "insert": "static camera",
            "track": "the camera tracks alongside the subject", "pov": "handheld point-of-view camera"}
-NEG_WAN = "字幕、水印、画面里的文字和标志、多余的人物、灰色方块和彩色圆柱（白模识别色）、卡通或动画质感、肢体变形、多余的手指、人物换脸"
+NEG_WAN = "字幕、水印、画面里的文字和标志、多余的人物、白模里的纯色小人和灰色方块、卡通或动画质感、肢体变形、多余的手指、人物换脸"
+SHAPE_ZH = {"rig": "带关节的纯色小人", "cyl": "纯色圆柱小人", "giant": "树干形巨物代理"}
+SHAPE_EN = {"rig": "solid-colored jointed mannequin", "cyl": "solid-colored cylinder figure", "giant": "trunk-shaped giant proxy"}
+
+
+def previs_map(spec, ref_of, lang="zh", full=False):
+    """白模的样子 + 每个代理换成谁（4.0 alpha.10，四家共用）。ref_of(tag) 返回这家对这张图的叫法，没有图返回 None。
+    返回 (白模长什么样, [代理 → 谁], [没有参考图的代理])。没有 proxies 字段的旧规格单退回 previs_colors。"""
+    look = spec.get("previs_look") or {}
+    prox = spec.get("proxies")
+    zh = lang == "zh"
+    if prox is None:
+        return ("灰色白模：识别色圆柱是人物，灰白方块是场景和道具" if zh else "grey whitebox previs: colored proxies are the characters, grey boxes are the set"), \
+            [spec.get("previs_colors", "")], []
+    shapes = sorted({p["shape"] for p in prox if p["shape"] != "giant"}) or ["rig"]
+    if zh:
+        desc = "白模是简化的三维预演：人物是" + "、".join(SHAPE_ZH[x] for x in shapes) + "，颜色只是识别色；墙、地面、家具是灰白方块"
+        desc += "；白模里有方向光和影子，只取光从哪边来，光的颜色、强弱和画面质感按下面的风格" if look.get("lit") else "；白模是平光，不取它的光"
+    else:
+        desc = ("The previs is a simplified 3D blockout: people are " + " and ".join(SHAPE_EN[x] + "s" for x in shapes)
+                + " whose colors are only ID colors; walls, floor and furniture are grey-white boxes")
+        desc += ("; it has directional light and shadows, of which only the light direction is kept, while light color, strength and texture follow the style below"
+                 if look.get("lit") else "; it is flat-lit and its light is not used")
+    rows, missing = [], []
+    for p in prox:
+        ref = ref_of(p["tag"])
+        if zh:
+            who = (f"{ref}「{p['name']}」" + (f"（长相、发型、服装、体型全按{ref}）" if full else "")) if ref else f"「{p['name']}」"
+            rows.append(f"{p['color']}色{SHAPE_ZH[p['shape']]} → {who}")
+        else:
+            who = f"{ref} ({p['name']})" if ref else p["name"]
+            rows.append(f"the {COLOR_EN.get(p['color'], p['color'])} {SHAPE_EN[p['shape']]} → {who}")
+        if not ref:
+            missing.append(p["name"])
+    crowd = ref_of("@crowd")
+    if look.get("extras"):
+        rows.append(("浅米色小人 → " + (f"{crowd}群像里按编号的群演" if crowd else "背景里的路人")) if zh
+                    else ("the beige figures → " + (f"the numbered extras from {crowd}" if crowd else "background passers-by")))
+    scene = ref_of("@loc")
+    rows.append(("灰白方块 → " + (f"{scene}里的墙、地面和家具" if scene else "场景里的墙、地面和家具")) if zh
+                else ("grey-white boxes → " + (f"the walls, floor and furniture of {scene}" if scene else "the walls, floor and furniture of the set")))
+    if look.get("props"):
+        rows.append("有尺寸的灰白小块 → 道具（只取位置和动作）" if zh else "small sized grey blocks → the props (position and motion only)")
+    if look.get("hands"):
+        rows.append("肉色小方块 → 特写里的手" if zh else "skin-colored small blocks → the hands in close-ups")
+    if look.get("effects"):
+        rows.append("跳动的小石块、飘落的小方片、张开的深色缝、伸长的长条 → 特效（只取位置、方向和时机）" if zh
+                    else "bouncing chips, falling flakes, opening dark cracks and extending bars → the effects (position, direction and timing only)")
+    return desc, rows, missing
+
+
+def ref_lookup(assets, label_of):
+    """按资产标签找这家的叫法：@人名、@crowd（群像）、@loc（第一张场景图）。"""
+    def f(tag):
+        for i, a in enumerate(assets, 1):
+            if tag == a.get("tag") or (tag == "@crowd" and a["kind"] == "crowd") or (tag == "@loc" and str(a.get("tag", "")).startswith("@loc_")):
+                return label_of(i, a)
+        return None
+    return f
 
 
 def fmt(x):
@@ -83,15 +141,9 @@ def hailuo(spec, part, short_duty_fn):
             defs.append(f"{lab}: {a['name']} — {en} Spatial layout, materials and light come from uploaded reference image {i}; "
                         "it is not a first frame and its composition is not copied.")
             keep.append(f"{lab}: partially_preserved — layout, materials and lighting")
-    proxy = spec["previs_colors"]
-    for zh, enc in COLOR_EN.items():
-        proxy = proxy.replace(f"{zh}色圆柱", f"{enc} cylinder")
-    for nm, lab in label.items():
-        proxy = re.sub(rf"=\s*{re.escape(nm)}(?=[，,]|$)", f" = {lab}", proxy)
-    proxy = re.sub(r"灰白方块=[^，,]*", "grey boxes = set and props", proxy).replace("，", "; ").replace(",", "; ")
-    proxy = re.sub(r"[\u4e00-\u9fff]+", "", proxy)  # 剩下的中文说明不进英文提示词
-    defs.append("<Video 1>: grey whitebox previs of this clip. It defines only the camera path, cut points, framing, blocking and the order "
-                f"of events; its grey boxes, colored proxy cylinders and neutral light are not carried over. Proxies: {proxy}.")
+    desc, rows, _ = previs_map(spec, ref_lookup(assets, lambda i, a: label[a["name"]]), "en")
+    defs.append("<Video 1>: the previs of this clip. It defines only the camera path, cut points, framing, blocking and the order of events. "
+                f"{desc}. Each proxy is replaced by real content: " + "; ".join(rows) + ". Only real people, sets and props appear in the target video.")
     for a in spec.get("_audio", []):  # 音色参考（sound 阶段生成）
         who = label.get(a["name"], a["name"])
         defs.append(f"{a['ref']}: voice of {who} (timbre and accent only, not its words).")
@@ -182,8 +234,10 @@ def kling(spec, part, short_duty_fn):
     out = ["[Asset Roles 素材职责]"]
     for i, a in enumerate(assets, 1):
         out.append(short_duty_fn(a, f"@Image{i}").replace(" 是", " 定义", 1))
-    out.append(f"@Video1 是本条的白模预演：按 @Video1 逐镜头、逐切点复刻镜头路线、切点、构图和人物走位（Recreate @Video1 shot-for-shot and "
-               f"cut-for-cut）；@Video1 里的灰色方块、识别色圆柱和中性光都不进成片。识别色：{spec['previs_colors']}。")
+    desc, rows, _ = previs_map(spec, ref_lookup(assets, lambda i, a: f"@Image{i}"))
+    out.append(f"@Video1 是本条的白模预演：以 @Video1 作镜头运动、切点节奏、构图和人物走位的参考，逐镜头、逐切点复刻（Use @Video1 as the reference for "
+               f"camera movements and shot pacing; recreate it shot-for-shot and cut-for-cut）。{desc}。把 @Video1 里的每个代理换成真实的人和物："
+               + "；".join(rows) + "。成片里只有真实的人和场景。")
     out += [f"{a['ref']} 定义「{a['name']}」的音色：只取音色、音高、语调和口音，不取内容和背景声。" for a in spec.get("_audio", [])]
     cuts = [fmt(sh["t0"] - t0) for sh in shots[1:]]
     out += ["", "[Overall Settings 总体设定]", f"场景与质感：{spec['context']}{spec['style']}",
@@ -214,14 +268,17 @@ def wan(spec, part, short_duty_fn):
     out = ["总体描述：" + spec["context"] + spec["count"], "", "参考素材："]
     for i, a in enumerate(assets, 1):
         out.append(short_duty_fn(a, f"图{i}"))
-    out.append(f"参考视频1的运镜方式、镜头切换节奏、构图和人物走位，逐个分镜对齐；视频1是灰色白模，它的灰色方块、识别色圆柱和中性光不出现在成片里。"
-               f"识别色：{spec['previs_colors']}。")
+    desc, rows, _ = previs_map(spec, ref_lookup(assets, lambda i, a: f"图{i}"), full=True)
+    out += ["", "白模参考（视频1）：",
+            "【保持不变】以视频1为蓝本：镜头路线、剪辑点、构图、人物的位置、走位和动作先后，逐个分镜对齐，不增不删。",
+            f"【白模写实化】{desc}。逐个替换：" + "；".join(rows) + "。",
+            "【成片】只出现真实的人、场景和道具；人物的长相、发型、体型和服装按对应的图，全程保持一致。"]
     out += [f"{a['ref']}是「{a['name']}」的音色参考：只取音色、音高、语调和口音，不取内容和背景声。" for a in spec.get("_audio", [])]
     out += ["", "分镜（每个分镜一个机位、一个主运镜，按时间硬切）："]
     for k, sh in enumerate(shots, 1):
         a, b = sh["t0"] - t0, sh["t1"] - t0
         tail = "硬切转场。" if k < len(shots) else ""
-        out.append(f"分镜{k}（{mmss(a)[:5]}-{mmss(b)[:5]}）：{quotes(sh['body'])}{tail}")
+        out.append(f"分镜{k}（{fmt(a)}-{fmt(b)}秒）：{quotes(sh['body'])}{tail}")  # 官方写法"（起-止）"；不截成整秒（2.5 秒的切点截成 2 秒，和白模对不上）
     sfx = "、".join(re.findall(r"<([^<>]+)>", spec["sfx"])) or "只有画面里动作的自然声"
     out += ["", "台词：" + ("台词一字不改；一次只有一个人说话，只有说话的人动嘴。口型同步。" + "；".join(v.rstrip("。") for v in spec["voices"]) + "。" if lines else "无台词。"),
             "", "音效与BGM：" + sfx + "。" + ("无 bgm。" if re.search(r"没有配乐|无配乐|无 ?bgm", spec["music"]) else spec["music"]),
