@@ -433,6 +433,8 @@ def validate(bible, board, models=("seedance",)):
                 E.append(f"{st} view「{s['view']}」不在场景 stage.views 里")
             if t == "pov" and not s.get("look") and not s.get("looks"):
                 E.append(f"{st} 主观镜头要写 look（看向哪个站位或人物）")
+            if s.get("angle") and s["angle"] not in ("ground", "low", "high", "overhead"):
+                E.append(f"{st} angle 要是 ground（贴地）/ low（低机位仰拍）/ high（高机位俯拍）/ overhead（顶拍）之一")
             cprops = set(clip.get("props", []))
             for n in s.get("see", []):
                 if n not in cprops:
@@ -653,6 +655,17 @@ def validate(bible, board, models=("seedance",)):
     for a, b in zip(cl, cl[1:]):
         if a.get("location") == b.get("location") and not b.get("time_jump") and a.get("model") and b.get("model") and a["model"] != b["model"]:
             W.append(f"第{a.get('n')}条和第{b.get('n')}条是同一场连续的戏，模型却不同（{a['model']} / {b['model']}）：同一场戏不换模型，换模型只在硬切处（docs/13）")
+    fl = bible.get("film_look")
+    for cid in [(fl or {}).get("camera")] + [w.get("camera") for w in bible.get("worlds", {}).values()] + \
+            [s.get("camera") for c in board.get("clips", []) for s in c.get("shots", [])]:
+        if cid and cid not in CAMS:
+            E.append(f"摄影机预设「{cid}」不在 config/camera_presets.json 里（可选：" + "、".join(f"{k} {v['name']}" for k, v in CAMS.items()) + "）")
+    if (fl or {}).get("camera") and re.search(r"ARRI|Alexa|ALEXA|ARRICAM|RED |V-RAPTOR|Sony|VENICE|Panavision|阿莱|索尼", str(fl.get("zh", "")) + str(fl.get("en", ""))):
+        W.append("film_look 选了摄影机预设，zh / en 里就不要再写机身：两套器材会互相打架；影调这一行只写调色、色板、雾气和光（docs/16 第六节）")
+    if fl is not None and not (isinstance(fl, dict) and ((len(str(fl.get("zh", ""))) >= 6 and len(str(fl.get("en", ""))) >= 12) or fl.get("camera"))):
+        E.append("film_look 要写 {\"zh\": 中文一行, \"en\": English one line, \"lens_zh\": \"变形宽银幕\"（可选）}：全片影调，逐字进场景图和视频提示词（docs/16 第六节）")
+    if not fl and bible.get("look"):
+        W.append("设定.json 没有 film_look（全片影调：摄影机、镜头组、调色、高光、雾气）：先用 tools/look_test.py 试拍 2–3 套再定（docs/16 第六节；《好日子》质感复盘）")
     if not bible.get("look") and not board.get("_series", {}).get("mode") == "episode":
         W.append("设定.json 没有 look：4.0 立项先挑类型卡和时长档位（docs/21），写成 \"look\": {\"genre\": \"G18\", \"tier\": \"1-3\"}")
     if board.get("_series"):
@@ -1076,9 +1089,34 @@ def items(bible, board):
     return out
 
 
+CAMS = {c["id"]: c for c in json.load(open(os.path.join(ROOT, "config", "camera_presets.json"), encoding="utf-8"))["预设"]}
+
+
+def cam_preset(bible, world=None, shot=None):
+    """成像逻辑（4.0 alpha.14）：这一镜用哪组摄影机预设。单镜 camera > 世界 camera > 全片 film_look.camera；都没写返回 None。"""
+    cid = (shot or {}).get("camera") or (bible.get("worlds", {}).get(world, {}) if world else {}).get("camera") or (bible.get("film_look") or {}).get("camera")
+    return CAMS.get(cid) if cid else None
+
+
+def cam_line(c, lang="en", stills=False):
+    if lang == "en":
+        return f"shot on {c['camera']} with {c['lens']} lenses" + (f" on {c['stock']}" if c.get("stock") else "") + f"; {c['stills_en' if stills else 'effects_en']}"
+    return f"摄影机：{c['camera']} + {c['lens']}" + (f" + {c['stock']}" if c.get("stock") else "") + f"；成像：{c['effects_zh']}"
+
+
+def with_look(en, bible, world=None):
+    """全片影调（设定 film_look）接在世界配方后面；有了影调就去掉配方里的"干净无噪点"（4.0 alpha.14）。人物三视图、道具图不加，保持中性参考。"""
+    fl = bible.get("film_look")
+    if not fl:
+        return en
+    en = re.sub(r"[;,]?\s*clean, noise-free image", "", en).rstrip(" ;,")
+    c = cam_preset(bible, world)
+    return f"{en}" + (f"; {fl['en']}" if fl.get("en") else "") + (f"; {cam_line(c, stills=True)}" if c else "")
+
+
 def style_map(bible):
     rec = {r["id"]: r for r in json.load(open(os.path.join(ROOT, "config", "style_recipes.json"), encoding="utf-8"))["配方"]}
-    en = {w: rec[v["recipe"]]["en"] for w, v in bible["worlds"].items()}
+    en = {w: with_look(rec[v["recipe"]]["en"], bible, w) for w, v in bible["worlds"].items()}
     en["__people__"] = rec[bible["people_recipe"]]["en"]
     for c in bible["characters"]:
         if c.get("kind") == "giant":
@@ -1562,6 +1600,13 @@ class Clip:
 
     def camera(self, s, t0):
         cm = self._camera(s, t0)
+        ang = s.get("angle")
+        if ang and not s.get("cam") and isinstance(cm.get("look_at"), list) and cm.get("keys"):  # 机位高低：不全在人眼高度（4.0 alpha.14）
+            lz = cm["look_at"][2]
+            z = {"ground": self.origin[2] + 0.25, "low": max(self.origin[2] + 0.35, lz - 0.75), "high": lz + 1.6, "overhead": lz + 4.0}.get(ang)
+            if z is not None:
+                for k in cm["keys"]:
+                    k["pos"] = [k["pos"][0], k["pos"][1], round(z, 4)]
         mv = s.get("move")
         if not mv or mv.get("kind") not in MOVES or len(cm["keys"]) > 1:
             return cm
@@ -1757,7 +1802,37 @@ class Clip:
         pair = next(((s["fg"], s["subject"]) for s in self.c["shots"] if s["type"] == "ots"), None)
         return (self.pos(pair[0], t), self.pos(pair[1], t)) if pair else None
 
-    def body(self, s, lens, t0=0.0):
+    def optics(self, s, lens, cm):
+        """有全片影调（设定 film_look）时，镜头写成电影摄影的说法：焦段 + 镜头类型 + 视场角、机位高度与俯仰、景深（4.0 alpha.14，《好日子》质感复盘）。
+        没写 film_look 的老项目保持"84°"的写法，产物不变。"""
+        fl = self.b.get("film_look")
+        deg = K.LENS_DEG.get(lens, f"{lens}mm")
+        if not fl:
+            return deg
+        c = cam_preset(self.b, self.loc["world"], s)
+        base_c = cam_preset(self.b, self.loc["world"])
+        if c:  # 镜头组 + 这一镜的焦段；单镜换了摄影机预设就写出来
+            out = (f"这一镜换成 {c['camera']}，" if c is not base_c else "") + f"{c['lens']} {lens}mm（视场约 {deg}）"
+            if c is not base_c:
+                out += f"，{c['effects_zh']}"
+        else:
+            out = f"{lens}mm {fl.get('lens_zh', '')}镜头（视场约 {deg}）".replace("  ", " ")
+        if cm and cm.get("keys"):
+            p = cm["keys"][0]["pos"]
+            la = cm.get("look_at")
+            lk = la if isinstance(la, list) else None
+            if lk:
+                dz, hz = p[2] - lk[2], math.hypot(lk[0] - p[0], lk[1] - p[1]) or 1e-6
+                pitch = math.degrees(math.atan2(dz, hz))
+                h = p[2] - self.origin[2]
+                ht = "贴地" if h < 0.5 else ("腰高" if h < 1.1 else ("人眼高" if h < 1.9 else ("高处" if h < 6 else "大俯瞰")))
+                ang = "仰拍" if pitch < -6 else ("俯拍" if pitch > 6 else "平视")
+                out += f"，机位{ht}{ang}"
+        sz = s.get("size") or ("特写" if s.get("type") == "insert" else "")
+        out += {"大特写": "，极浅景深", "特写": "，浅景深，背景完全虚化", "近景": "，浅景深，背景虚化", "中景": "，背景轻微虚化"}.get(sz, "，景深较深")
+        return out
+
+    def body(self, s, lens, t0=0.0, cm=None):
         b, t = [], s["type"]
         world = self.loc["world"]
         if t == "ots":
@@ -1774,7 +1849,7 @@ class Clip:
             ids = "、".join(map(str, s["crowd"].get("ids", [])))
             b.append(f"{world}群演（{ids} 号）{s['crowd'].get('doing', '')}")
         head = "画面里：" + "、".join(b) + "。"
-        deg = K.LENS_DEG.get(lens, f"{lens}mm")
+        deg = self.optics(s, lens, cm)
         mv = s.get("move")
         base = MOVE[t] if t != "pov" else f"{s['subject']}的主观视角，{s['subject']}自己不入画"
         if t == "insert":  # 插入镜头按 cam_offset 写俯拍 / 仰拍；景别不是特写时不写"特写"（《好日子》第 7 条仰拍岩壁裂缝）
@@ -1785,6 +1860,10 @@ class Clip:
             base = cmv["zh"] if t != "pov" else f"{base}，{cmv['zh']}"
         mtxt = base if not mv else (move_text(mv) if t in ("wide", "single") else f"{base}，{move_text(mv)}")
         parts = [f"{deg}，{s.get('size', '') + '，' if s.get('size') else ''}{mtxt}"]
+        if s.get("comp"):  # 构图手法（前景框、纵深、留白、剪影、对称……）
+            parts.append(f"构图：{s['comp']}")
+        if s.get("light"):  # 这一镜的布光：主光方向、明暗比、轮廓光、雾气、实景光源
+            parts.append(f"光：{s['light']}")
         acts = s.get("action", [])
         for a in (acts if isinstance(acts, list) else [acts]):
             parts.append(f"第 {a['at']} 秒，{a['text']}" if isinstance(a, dict) and "at" in a else (a["text"] if isinstance(a, dict) else a))
@@ -1897,7 +1976,7 @@ class Clip:
         ppl_all = self.people()
         for k, s in enumerate(self.c["shots"], 1):
             cm = self.camera(s, t0)
-            sh = dict(t0=round(t0, 3), t1=round(t0 + s["dur"], 3), name=s.get("name", f"镜{k}"), lens=cm["lens"], cam=cm, body=self.body(s, cm["lens"], t0))
+            sh = dict(t0=round(t0, 3), t1=round(t0 + s["dur"], 3), name=s.get("name", f"镜{k}"), lens=cm["lens"], cam=cm, body=self.body(s, cm["lens"], t0, cm))
             glass = [f"{self.loc['name']}_{bx['name']}" for bx in self.loc["stage"].get("boxes", []) if bx.get("color") == "glass"]
             occ = list(s.get("allow_occlude", [])) + glass  # 玻璃是透明的，挡在前面不算遮挡
             if occ:
@@ -2135,6 +2214,14 @@ def build_specs(proj):
         vz = lambda r: r.get("video_zh", r["zh"])  # noqa: E731
         cl.style_en = f"Setting look: {vid(ve(rz[wr]))}." + (f" People look: {vid(ve(rz[pr]))}." if ve(rz[pr]) != ve(rz[wr]) else "")
         style_zh = f"质感：{world}（{wr}）：{vz(rz[wr])}" + (f"；人物（{pr}）：{vz(rz[pr])}。" if pr != wr else "。")
+        if bible.get("film_look"):  # 全片影调：每一条逐字一样，压在世界配方后面（4.0 alpha.14）
+            if bible["film_look"].get("en"):
+                cl.style_en += f" Film look: {bible['film_look']['en']}."
+                style_zh += f"影调：{bible['film_look']['zh']}。"
+            cpr = cam_preset(bible, world)
+            if cpr:  # 成像逻辑：这个世界用的摄影机预设
+                cl.style_en += f" Camera: {cam_line(cpr)}."
+                style_zh += cam_line(cpr, "zh") + "。"
         clips.append(cl.build(idx))
         clips[-1]["style_zh"] = style_zh
         cm = char_map(bible)
