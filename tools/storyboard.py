@@ -582,6 +582,7 @@ def validate(bible, board, models=("seedance",)):
     look_check(bible, board, E, W)
     ai_weak_check(board, W)
     leak_check(bible, board, E)
+    emotion_check(board, E)
     for c in board.get("clips", []):
         for k, sh in enumerate(c.get("shots", []), 1):
             for key in ("allow_occlude", "allow_small", "allow_exit"):
@@ -761,6 +762,31 @@ def _ref_names():
     stop = {"爱死机", "docs", "11 #010", "工厂已有", "系列", "照明娱乐式 3D", "高畑勋的作品", "九十年代港片", "天劫外包",  # 说明文字、自家项目
             "回路", "燃烧", "潜伏", "放逐", "枪火", "异形", "招魂", "封神", "聊斋", "哪吒", "后窗", "侠女", "1917", "功夫", "密探"}  # 常用词、公版题材：不当片名拦
     return {n for n in names if len(n) >= 2 and n not in stop} | {"高畑勋"}
+
+
+EMO_RX = (r"悲伤|痛苦|痛心|伤心|难过|绝望|崩溃|沮丧|失落|无奈|委屈|愧疚|内疚|羞愧|羞耻|嫉妒|思念|释然|欣喜|激动|感动|开心|高兴|快乐|兴奋|"
+          r"愤怒|生气|恼火|紧张|害怕|恐惧|惊恐|恐慌|惶恐|焦虑|不安|尴尬|怀疑|心虚|得意|震惊|犹豫|迷茫|坚定|冷漠|温柔|慌|羞|恨|爱意")
+CUE_RX = (r"眼|视线|眉|嘴|唇|下颌|下巴|喉|鼻|手|指|拳|头|肩|胸|背|腰|腿|脚|膝|呼吸|叹气|吸气|呼气|喘|眨|点头|摇头|歪|皱|抿|咬|靠|倾|摸|挠|抱|"
+          r"停|僵|颤|抖|吞|笑|哭|泪|脸|攥|握|捏|抓|松开|退|走|跑|跪|坐|站|转身|回头|低头|抬头|声音|嗓|音量|语速|哑|哽|顿|沉默|轻声|大喊|喊|吼|小声|压低")
+
+
+def emotion_check(board, E):
+    """情绪只写成模型演得出来的动作（用户 2026-11-09：不写"他很悲伤""他很痛苦"）。
+    动作、节拍文字、表演泄漏、台词语气会逐字进提示词：只写了情绪词、没写任何看得见或听得见的表现就报错。
+    改法见 crew/08-acting-coach/真人对话数据.md 第二节、表演词表.md、SKILL.md C 节（情绪的起、到顶、收）。"""
+    def bad(t):
+        return bool(t) and re.search(EMO_RX, t) and not re.search(CUE_RX, t)
+    for c in board.get("clips", []):
+        for k, s in enumerate(c.get("shots", []), 1):
+            tag = f"第{c.get('n')}条 镜{k}"
+            acts = s.get("action", [])
+            texts = [("动作", a.get("text") if isinstance(a, dict) else a) for a in (acts if isinstance(acts, list) else [acts])]
+            texts += [("节拍", bt.get("text", "")) for bt in s.get("beats", []) or []]
+            texts += [("表演泄漏", (s.get("acting") or {}).get("leak", "")), ("台词语气", (s.get("line") or {}).get("delivery", ""))]
+            for kind, t in texts:
+                if bad(t):
+                    E.append(f"{tag} {kind}「{t}」只写了情绪：模型演不出情绪词，改成看得见的动作——哪里动、往哪动、多大、被什么触发"
+                             f"（例：不写'他很悲伤'，写'听到那句话手上的动作停住，下巴往上一推，吞了一下'；crew/08 真人对话数据第二节、表演词表）")
 
 
 def leak_check(bible, board, E):
