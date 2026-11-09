@@ -54,7 +54,8 @@ PALETTE = [[0.95, 0.8, 0.15], [0.2, 0.35, 0.85], [0.85, 0.2, 0.15], [0.95, 0.6, 
 PALETTE_ZH = ["黄", "蓝", "红", "粉", "绿", "紫"]
 # 精准白模（4.0 alpha.8）：节拍里能用的动作，和 tools/previs/common.py 的 POSES 一致
 POSE_NAMES = {"stand", "walk", "run", "sit", "sit_ground", "kneel", "kowtow", "bend", "crouch", "pick", "raise_arms", "carry", "hands_front",
-              "lean_back", "dragged", "fall", "nod", "comb", "pull", "struggle", "laugh", "reach", "grab", "give", "point", "hold", "look"}
+              "lean_back", "dragged", "fall", "nod", "comb", "pull", "struggle", "laugh", "reach", "grab", "give", "point", "hold", "look",
+              "punch", "jab", "kick", "block", "duck", "stagger", "lie", "slump"}  # 打戏与倒地（4.0 alpha.12）
 PROP_DOS = {"take", "put", "move", "swing", "show", "hide"}
 FORMATIONS = {"line", "rows", "column", "ring", "scatter"}
 BOXCOLOR = {"wood": [0.35, 0.25, 0.18], "white": [0.92, 0.92, 0.9], "stone": [0.45, 0.47, 0.5], "floor": [0.5, 0.5, 0.52],
@@ -328,12 +329,23 @@ def validate(bible, board, models=("seedance",)):
                 E.append(f"{tag} cast 里的「{name}」不是设定里的人物")
             elif chars[name].get("kind") == "voice":
                 E.append(f"{tag} 「{name}」是只有声音的角色（kind: voice），不能进 cast；他的台词写 mode: off")
+            if cv.get("ride"):  # 坐在车里（4.0 alpha.12）
+                st_ = clip.get("prop_states", {}).get(cv["ride"], {})
+                if cv["ride"] not in clip.get("props", []) or not (st_.get("path") or st_.get("at")):
+                    E.append(f"{tag} 「{name}」ride 的「{cv['ride']}」要在这一条的 props 里，并在 prop_states 写 at 或 path")
+                if "path" in cv or "at" in cv:
+                    E.append(f"{tag} 「{name}」坐在车里（ride），不要再写 at / path：位置跟着车走，座位偏移写 seat")
             for p in ([cv] if "at" in cv else cv.get("path", [])):
                 if isinstance(p.get("at"), str) and p["at"] not in marks:
                     E.append(f"{tag} 「{name}」的站位「{p['at']}」不在场景「{loc}」的 marks 里")
         for p in clip.get("props", []):
             if p not in props:
                 E.append(f"{tag} props 里的「{p}」不在设定的 props 里")
+            elif props[p].get("vehicle"):  # 载具的识别色撞了路面就看不见（高难镜头测试：黑车压在黑路上）
+                ground = {bx.get("color", "white") for bx in locs[loc]["stage"].get("boxes", []) if bx["max"][2] <= 0.1
+                          and min(bx["max"][0] - bx["min"][0], bx["max"][1] - bx["min"][1]) > 2}  # 大面积的路面、地面（不算路中的白线）
+                if props[p].get("proxy_color", "white") in ground:
+                    W.append(f"{tag} 载具「{p}」的 proxy_color「{props[p].get('proxy_color', 'white')}」和路面同色，白模里看不见：换一种颜色（只影响白模）")
         shots = clip.get("shots", [])
         turn, sig = clip.get("turn") or {}, clip.get("signature") or {}
         if not (turn.get("from") and turn.get("to")) or turn.get("from") == turn.get("to"):
@@ -419,8 +431,23 @@ def validate(bible, board, models=("seedance",)):
                         E.append(f"{st} 过肩的「{s['fg']}」和「{s.get('subject')}」站在同一个站位「{a_.get('at')}」，算不出机位：分开站")
             if t == "wide" and s.get("view") and s["view"] not in locs[loc]["stage"].get("views", {}):
                 E.append(f"{st} view「{s['view']}」不在场景 stage.views 里")
-            if t == "pov" and not s.get("look"):
+            if t == "pov" and not s.get("look") and not s.get("looks"):
                 E.append(f"{st} 主观镜头要写 look（看向哪个站位或人物）")
+            cprops = set(clip.get("props", []))
+            for n in s.get("see", []):
+                if n not in cprops:
+                    E.append(f"{st} see 里的「{n}」不在这一条的 props 里（see 只写画面里要拍到的车和道具）")
+            cmo = (s.get("cam") or {}).get("mount")
+            if cmo:
+                if cmo.startswith("prop_") and cmo[5:] not in cprops:
+                    E.append(f"{st} cam.mount「{cmo}」不在这一条的 props 里")
+                elif not cmo.startswith("prop_") and cmo not in cast:
+                    E.append(f"{st} cam.mount「{cmo}」既不是本条的人，也不是 prop_道具")
+                if not s["cam"].get("look") and not s["cam"].get("looks"):
+                    E.append(f"{st} 挂载机位要写 look 或 looks（看哪里）")
+            for lk_ in s.get("looks", []) + (s.get("cam") or {}).get("looks", []):
+                if "t" not in lk_ or "at" not in lk_ or not 0 <= lk_["t"] <= s.get("dur", 0):
+                    E.append(f"{st} looks 每项写 {{\"t\": 镜内秒, \"at\": 看哪里}}，t 在 0 到这一镜时长之间")
             if t == "insert":
                 if s.get("object") not in marks:
                     E.append(f"{st} 插入镜头的 object 要是场景 marks 里的点（拍哪个物件）")
@@ -527,6 +554,14 @@ def validate(bible, board, models=("seedance",)):
         for m in models:
             if m in img_cap and need > img_cap[m]:
                 W.append(f"第{c.get('n')}条 有 {people_n} 个人加场景图，{m} 最多收 {img_cap[m]} 张参考图：多出来的人在白模里有代理却没有图，会被画成纯色小人；拆条或减人（docs/13 八·六）")
+    for c in board.get("clips", []):  # 4.0 alpha.12，学自 scenario-labs：连着两个物件特写会泄掉张力；喂白模的条超过 15 秒布局容易漂
+        sh_ = c.get("shots", [])
+        for k in range(1, len(sh_)):
+            if sh_[k].get("type") == "insert" and sh_[k - 1].get("type") == "insert" and not sh_[k].get("insert_pair"):
+                W.append(f"第{c.get('n')}条 镜{k}、镜{k + 1} 连着两个特写：观众一直看不到人，张力会掉下来；中间插一个人的镜头，或合成一个特写（确实要连着拍，写 insert_pair: true）")
+        total = sum(s.get("dur", 0) for s in sh_)
+        if "seedance" in models and total > 15.01:
+            W.append(f"第{c.get('n')}条 {total:g} 秒喂白模出：实测 10–15 秒的片段机位和布局都保得住，20–30 秒会漂（丢人、自己加特写）；能拆就在硬切处拆成两条（docs/14 4.3 第 1 条）")
     if "wan" in models:  # 万相默认不喂白模，空间全靠文字：两人以上同场要写场面布局（docs/14 4.3 第 5 条）
         for c in board.get("clips", []):
             seen = [n for n, v in c.get("cast", {}).items() if not v.get("hidden") and chars.get(n, {}).get("kind") != "voice"]
@@ -1075,7 +1110,8 @@ class Clip:
         pts = cv["path"] if "path" in cv else [dict(cv, t=0)]
         return pts
 
-    DROP = {"sit": 0.24, "sit_ground": 0.46, "kneel": 0.25, "kowtow": 0.55, "crouch": 0.22, "bend": 0.2, "pick": 0.38}
+    DROP = {"sit": 0.24, "sit_ground": 0.46, "kneel": 0.25, "kowtow": 0.55, "crouch": 0.22, "bend": 0.2, "pick": 0.38,
+            "duck": 0.38, "lie": 0.85, "slump": 0.55}
 
     def drop(self, name, t):
         """节拍里的坐、跪、蹲、弯腰让头变低：机位按变低的头算（4.0 alpha.8）。"""
@@ -1092,7 +1128,110 @@ class Clip:
         dz = self.drop(name, t) if name in self.chars and "beats" in str(self.c.get("shots")) else 0.0
         return [p[0], p[1], p[2] - dz] if dz else p
 
+    def _look_name(self, at):
+        if isinstance(at, list):
+            return None
+        return at[5:] if at.startswith("prop_") else at
+
+    def cam_move(self, s):
+        """手写机位的运动怎么写进提示词：挂在车上 / 人身上跟着走、车内往外看、起止两点之间移动。没有运动返回 None。"""
+        c = s.get("cam") or {}
+        if s.get("type") == "pov":
+            return {"zh": "镜头跟着主观者的头一起走动", "en": "the camera moves with the viewer's head, first-person"}
+        if c.get("mount"):
+            m = c["mount"]
+            nm = m[5:] if m.startswith("prop_") else m
+            if m.startswith("prop_"):
+                pr = next((x for x in self.b.get("props", []) if x["name"] == nm), {})
+                sz, off = pr.get("size", [0.3, 0.2, 0.1]), c.get("offset", [0, 0, 0])
+                if all(abs(off[i]) < sz[i] / 2 for i in range(3)):
+                    return {"zh": f"镜头在{nm}里往前看，跟着车一起移动", "en": "the camera looks out from inside the vehicle, travelling with it"}
+                return {"zh": f"镜头挂在{nm}外侧，跟着它一起高速移动", "en": "the camera is mounted on the vehicle and travels with it"}
+            return {"zh": f"镜头跟在{nm}身边一起移动", "en": "the camera travels alongside the subject, following closely"}
+        if c.get("end"):
+            lk = c.get("look")
+            on = (lk[5:] if lk.startswith("prop_") else lk) if isinstance(lk, str) else None
+            return {"zh": "镜头平稳移动" + (f"，始终对着{on}" if on else ""), "en": "the camera glides smoothly" + (", staying on the subject" if on else "")}
+        return None
+
+    def mount_point(self, m, t):
+        """挂载点在 t 秒的位置：'prop_红车' 取车身中心，人名取头。"""
+        if m.startswith("prop_"):
+            pr = next((x for x in self.b.get("props", []) if x["name"] == m[5:]), {})
+            q = self.prop_pos(m[5:], t)
+            return [q[0], q[1], q[2] + pr.get("size", [0.3, 0.2, 0.1])[2] / 2]
+        return K.head(self.pos(m, t), self.height(m))
+
+    def look_keys(self, eye, looks, t0):
+        """视线关键帧：[{t: 镜内秒, at: 站位点 / 人名 / prop_道具 / [x,y,z]}] → [{t: 整条秒, yaw, pitch}]（yaw 和人的 face 同一套角度）。"""
+        out = []
+        for L in looks:
+            tt = t0 + L.get("t", 0)
+            e = eye(tt)
+            at = L["at"]
+            if isinstance(at, str) and at in self.c.get("cast", {}):
+                tg = K.head(self.pos(at, tt), self.height(at))
+            elif isinstance(at, str) and at.startswith("prop_"):
+                tg = self.mount_point(at, tt)
+            else:
+                tg = self.pt(at)
+            hz = math.hypot(tg[0] - e[0], tg[1] - e[1]) or 1e-6
+            out.append({"t": round(tt, 3), "yaw": round(K.face_to(e, tg), 2), "pitch": round(math.degrees(math.atan2(tg[2] - e[2], hz)), 2)})
+        return out
+
+    @staticmethod
+    def _yaw_point(p, lk, d=10.0):
+        a, b = math.radians(lk["yaw"]), math.radians(lk["pitch"])
+        return [round(p[0] + math.sin(a) * d, 4), round(p[1] - math.cos(a) * d, 4), round(p[2] + math.tan(b) * d, 4)]
+
+    def mounted_cam(self, s, t0, c):
+        """cam.mount："prop_红车" / 人名；offset：相对挂载点的偏移（米，场景坐标）；look 或 looks：看哪里。
+        镜头在车身里面时（车内镜头），白模把这辆车藏起来，换成一块引擎盖，从车里往外看不会整屏一块颜色。"""
+        off = c.get("offset", [0, 0, 0])
+        eye = lambda tt: [a + b for a, b in zip(self.mount_point(c["mount"], tt), off)]  # noqa: E731
+        lks = self.look_keys(eye, c.get("looks") or [{"t": 0, "at": c["look"]}], t0)
+        p = eye(t0)
+        cm = K.cam(t0, c.get("lens", 35), p, self._yaw_point(p, lks[0]))
+        cm.update(mount=c["mount"], mount_off=off, looks=lks, hide=list(c.get("hide", [])))
+        if c.get("bob"):
+            cm["bob"] = c["bob"]
+        if c["mount"].startswith("prop_"):
+            pr = next((x for x in self.b.get("props", []) if x["name"] == c["mount"][5:]), {})
+            sz = pr.get("size", [0.3, 0.2, 0.1])
+            if all(abs(off[i]) < sz[i] / 2 for i in range(3)):
+                cm["hide"].append(c["mount"])
+                for n2, cv2 in self.c.get("cast", {}).items():  # 镜头就在这个座位上：坐在这里的人也藏起来（司机的主观）
+                    if cv2.get("ride") == c["mount"][5:] and math.dist(self.seat(n2)[:2], off[:2]) < 0.45:
+                        cm["hide"].append(n2)
+                a = math.radians(lks[0]["yaw"])
+                fwd = [math.sin(a), -math.cos(a)]
+                cm["hood"] = {"size": [sz[0] * 0.92, 1.5, 0.05], "off": [fwd[0] * 1.25, fwd[1] * 1.25, -0.42], "yaw": lks[0]["yaw"],
+                              "color": BOXCOLOR.get(pr.get("proxy_color", "white"), BOXCOLOR["white"])}
+        return cm
+
+    def prop_pos(self, name, t):
+        """道具在 t 秒的位置（prop_states 的 at / path），载具和坐在里面的人、挂在车上的镜头都用它。"""
+        st = self.c.get("prop_states", {}).get(name, {})
+        pts = st.get("path") or [{"t": 0, "at": st.get("at")}]
+        prev = pts[0]
+        for q in pts:
+            tq = q["t"]
+            if tq <= t:
+                prev = q
+            else:
+                f = (t - prev["t"]) / (tq - prev["t"]) if tq > prev["t"] else 1.0
+                return _lerp(self.pt(prev["at"]), self.pt(q["at"]), f)
+        return self.pt(prev["at"])
+
+    def seat(self, name):
+        cv = self.c["cast"][name]
+        return cv.get("seat", [-0.4, 0.2, 0.1])  # 默认驾驶座：车身中心偏左、偏前，坐下后头在车顶下面
+
     def _pos(self, name, t):
+        cv = self.c["cast"].get(name, {})
+        if cv.get("ride"):  # 坐在车里的人：车在哪人在哪
+            q = self.prop_pos(cv["ride"], t)
+            return [q[i] + self.seat(name)[i] for i in range(3)]
         pts = self.path(name)
         prev = pts[0]
         for p in pts:
@@ -1128,14 +1267,20 @@ class Clip:
             if self.c["cast"][name].get("hidden"):  # 藏在轿里、箱里、门后的人：白模不渲，模型就不会把代理画出来（4.0 alpha.10，实拍《好日子》第 6 条）
                 continue
             keys = []
-            for p in self.path(name):
+            for p in ([] if self.c["cast"][name].get("ride") else self.path(name)):
                 f = p.get("face", self.c["cast"][name].get("face", 0))
                 face = f if isinstance(f, (int, float)) else (self.pos(f, p["t"]) if f in self.c["cast"] else self.pt(f))
                 keys.append((p["t"], self.pt(p["at"]), face, p.get("lean", 0)))
             dur = sum(s["dur"] for s in self.c["shots"])
+            if not keys:  # 坐车的人：位置是相对车的座位（白模里用约束挂在车上）
+                f = self.c["cast"][name].get("face", 180)
+                keys = [(0.0, self.seat(name), f if isinstance(f, (int, float)) else 180, 0)]
             keys.append((dur, keys[-1][1], keys[-1][2], keys[-1][3]))
             ci = [c["name"] for c in self.b["characters"] if c.get("kind") != "voice"].index(self.chars[name].get("_base", name))  # 和投喂包里的识别色说明同一套编号
             per = K.person(name, PALETTE[ci % len(PALETTE)], self.height(name), keys)
+            if self.c["cast"][name].get("ride"):  # 坐在车里：白模把人挂在车上（座位偏移），速度检查不查
+                per["ride"] = "prop_" + self.c["cast"][name]["ride"]
+                per["seat"] = self.seat(name)
             if self.chars[name].get("kind") == "giant":
                 per["shape"] = "giant"  # 白模用巨物形状代理（树干、根须、空心头），不是放大的小人
                 for k, p in zip(per["keys"], self.path(name)):  # head_at：巨物俯身，空心头落到这个站位点（cast 或路径点上写）
@@ -1145,6 +1290,8 @@ class Clip:
                 if per["keys"][-2].get("head"):
                     per["keys"][-1]["head"] = per["keys"][-2]["head"]
             poses = [b for b in self.beat_poses() if b["who"] == name]
+            if self.c["cast"][name].get("ride") and not any(b["pose"] in ("sit", "stand") for b in poses):  # 坐在车里：默认整条坐着，头不会从车顶冒出来
+                poses = [{"who": name, "t0": 0.0, "t1": dur, "pose": "sit"}] + poses
             if poses:
                 per["poses"] = [{k: v for k, v in b.items() if k != "who"} for b in poses]
             out.append(per)
@@ -1206,7 +1353,14 @@ class Clip:
             if b.get("arm"):
                 item["arm"] = b["arm"]
             out.append(item)
-        return out
+        merged = []  # 同一个人、同一个姿态、同一个目标的几段重叠时合成一段：白模里姿态是叠加的，重叠两次幅度就翻倍（4.0 alpha.12：连写三个 hold 的"双手在前"，村长的胳膊举过了头顶）
+        for it in sorted(out, key=lambda x: (x["who"], x["pose"], json.dumps(x.get("target")), x.get("arm", ""), x["t0"])):
+            m = merged[-1] if merged else None
+            if m and all(m.get(k) == it.get(k) for k in ("who", "pose", "target", "arm", "look")) and it["t0"] <= m["t1"] + 0.5:  # 相隔不到 0.5 秒也接上，免得一收一放的过渡里幅度忽高忽低
+                m["t1"] = max(m["t1"], it["t1"])
+            else:
+                merged.append(dict(it))
+        return sorted(merged, key=lambda x: x["t0"])
 
     def extras(self):
         """群演进白模：clip 的 extras 是一组组群演，按队形站位、可以沿路径走、按时间换姿态。"""
@@ -1246,7 +1400,7 @@ class Clip:
                 for t in times:
                     a = anchor(t)
                     ft = g.get("face") if t <= g.get("face_until", 1e9) else None  # face_until 之后朝走的方向（跪拜完转身下山）
-                    fp = (self.pos(ft, t) if ft in self.c.get("cast", {}) else self.pt(ft)) if ft else None
+                    fp = (self.pos(ft, t) if isinstance(ft, str) and ft in self.c.get("cast", {}) else self.pt(ft)) if ft else None  # face 可以是人名、站位点或坐标
                     if fp is None and len(path) > 1:
                         nxt = anchor(min(dur, t + 0.5))
                         if math.dist(nxt[:2], a[:2]) > 1e-3:
@@ -1319,6 +1473,8 @@ class Clip:
             pr = props[nm]
             st = states.get(nm, {})
             spec = {"name": nm, "size": pr.get("size", [0.3, 0.2, 0.1]), "color": BOXCOLOR.get(pr.get("proxy_color", "white"), BOXCOLOR["white"]), "keys": []}
+            if pr.get("vehicle"):  # 载具：速度按车查（docs/19）
+                spec["vehicle"] = True
             for k in ("open", "open_at", "tear_from"):
                 if st.get(k) is not None:
                     spec[k] = st[k]
@@ -1416,6 +1572,8 @@ class Clip:
 
     def _camera(self, s, t0):
         t, size = s["type"], s.get("size")
+        if s.get("cam") and s["cam"].get("mount"):  # 挂在车上、人身上的机位（车内、车头、肩扛跟拍）
+            return self.mounted_cam(s, t0, s["cam"])
         if s.get("cam"):  # 逃生口：直接给机位
             c = s["cam"]
             lk = c["look"] if isinstance(c["look"], str) and (c["look"].startswith("prop_") or c["look"] in self.c.get("cast", {})) else self.pt(c["look"])  # "prop_花轿" / 人名：镜头盯住移动的道具或人，look_off 偏开一点（盯脚写 [0, 0, -1.2]）
@@ -1439,7 +1597,17 @@ class Clip:
             if s.get("aim"):  # 对准人身上的点（"秀英.脚" / "秀英.手"），取这一镜中间时刻的位置：人在走、在被拖，静态标记点会对空（《好日子》第 6 条镜 8）
                 who, part = (s["aim"].split(".") + ["脚"])[:2]
                 q = self.pos(who, t0 + s["dur"] * s.get("aim_t", 0.5))  # aim_t：取这一镜里哪个时刻的位置（0–1，默认中间）
-                o = [q[0], q[1], 0.05 if part == "脚" else 0.5 * self.height(who)]
+                fd = self.face_dir(who, t0 + s["dur"] * s.get("aim_t", 0.5))
+                hh = self.height(who)
+                if part == "脚":
+                    o = [q[0], q[1], 0.05]
+                else:  # 手：垂在身侧的右手（左手写"人名.左手"），不是身体中心（高难镜头测试第 2 条镜 3 拍成了胸口）
+                    sgn = -1.0 if "左" in part else 1.0
+                    o = [q[0] - fd[1] * 0.12 * hh * sgn * -1, q[1] + fd[0] * 0.12 * hh * sgn * -1, 0.45 * hh]
+                off = s.get("cam_offset", [0.0, -0.45, 0.6] if part == "脚" else [-0.25, -0.6, 0.25])  # 偏移写在人自己的朝向里（-y 是人的正前方）：人转身，机位跟着转，不会钻进身体（高难镜头测试第 2 条镜 3）
+                ca, sa = -fd[1], fd[0]
+                off = [off[0] * ca - off[1] * sa, off[0] * sa + off[1] * ca, off[2]]
+                return K.cam(t0, 50, K.add(o, off), o)
             off = s.get("cam_offset", [0.0, -0.45, 0.6])
             return K.cam(t0, 50, K.add(o, off), o)
         h = self.height(subj)
@@ -1452,10 +1620,16 @@ class Clip:
             if not s.get("center"):  # 过肩：被拍的人落在前景肩膀的另一侧（38% / 62%）
                 look = golden(p, look, lens, [fg[0] - p[0], fg[1] - p[1], 0.0], ratio=0.1, hw=self.hw)
             return K.cam(t0, lens, p, look)
-        if t == "pov":
-            p = K.head(self.pos(subj, t0), h)
-            lk = self.pos(s["look"], t0) if s["look"] in self.c["cast"] else self.pt(s["look"])
-            return K.cam(t0, SIZES[size or "中景"][0], p, lk)
+        if t == "pov":  # 主观镜头挂在人头上跟着走，本人不入画；looks 让视线按时间转（回头、转回来）（4.0 alpha.12）
+            eye = lambda tt: K.head(self.pos(subj, tt), h)  # noqa: E731
+            lks = self.look_keys(eye, s.get("looks") or [{"t": 0, "at": s["look"]}], t0)
+            p = eye(t0)
+            cm = K.cam(t0, SIZES[size or "中景"][0], p, self._yaw_point(p, lks[0]))
+            sp = math.dist(self.pos(subj, t0)[:2], self.pos(subj, t0 + s["dur"])[:2]) / s["dur"]
+            cm.update(mount=subj, mount_off=[0, 0, 0], looks=lks, hide=[subj])
+            if sp > 0.8:  # 走、跑时镜头上下颠
+                cm["bob"] = 0.045 if sp > 2.2 else 0.018
+            return cm
         lens, dist, hr = SIZES[size or ("近景" if t == "single" else "中景")]
         pair = next(((x["fg"], x["subject"], x) for x in self.c["shots"] if x["type"] == "ots"), None)
         other = None
@@ -1465,8 +1639,25 @@ class Clip:
             po = K.ots(fa, self.height(pair[0]), fb, (fa, fb), back=pair[2].get("back", 0.9), lat=pair[2].get("lat", 0.3))
             ax_sign = 1.0 if (fb[0] - fa[0]) * (po[1] - fa[1]) - (fb[1] - fa[1]) * (po[0] - fa[0]) >= 0 else -1.0
 
+        swing = 0.0
+        if t in ("track", "single"):  # 正面有别人挡着：跟拍被推着后退的人（高难镜头测试第 2 条镜 4）、单人镜头前面站着拦路的人（场面调度测试第 1 条镜 7）→ 转开
+            for tt in (t0, t0 + s["dur"] / 2, t0 + s["dur"]):
+                pos0, d0 = self.pos(subj, tt), self.face_dir(subj, tt)
+                for o2 in self.c.get("cast", {}):
+                    if o2 == subj or self.c["cast"][o2].get("hidden") or self.chars.get(o2, {}).get("kind") in ("giant", "voice"):
+                        continue
+                    q2 = self.pos(o2, tt)
+                    v2 = [q2[0] - pos0[0], q2[1] - pos0[1]]
+                    L2 = math.hypot(*v2)
+                    if L2 < dist * 1.2 and (v2[0] * d0[0] + v2[1] * d0[1]) > 0.55 * L2:
+                        swing = 1.0 if (d0[0] * v2[1] - d0[1] * v2[0]) < 0 else -1.0  # 转到另一个人不在的那一侧
+            swing = s.get("swing", swing)
+        sw_ang = math.radians(90 if t == "track" else 50) * swing  # 跟拍转到正侧面；单人镜头只转 50°，还是看得到脸
+
         def front(tt):
             pos, d = self.pos(subj, tt), self.face_dir(subj, tt)
+            if swing:
+                d = [d[0] * math.cos(sw_ang) - d[1] * math.sin(sw_ang), d[0] * math.sin(sw_ang) + d[1] * math.cos(sw_ang), 0.0]
             side = [-d[1], d[0], 0]
             if other:
                 fa, fb = self.pos(pair[0], tt), self.pos(pair[1], tt)
@@ -1481,9 +1672,9 @@ class Clip:
                 look = golden(p0, look, lens, [op[0] - p0[0], op[1] - p0[1], 0.0], hw=self.hw)
             else:
                 look = golden(p0, look, lens, self.face_dir(subj, t0), hw=self.hw)
-        if t == "track":
+        if t == "track":  # 镜头盯住人走（注视点跟着人动），不是盯着开头那一刻的位置
             p1, _ = front(t0 + s["dur"])
-            return K.cam(t0, lens, p0, look, p1, t0 + s["dur"])
+            return K.cam(t0, lens, p0, subj, p1, t0 + s["dur"])
         return K.cam(t0, lens, p0, look)
 
     def fit_vertical(self, p, look, lens, names, t0, dur, mv=None, margin=0.82):
@@ -1546,26 +1737,41 @@ class Clip:
             b.append(f"画面一侧前景{s['fg']}虚化的肩膀")
         if t == "insert":
             b.append(f"{s['hand']}和{s['object']}" if s.get("hand") else s["object"])
-        for n in ([s["subject"]] if s.get("subject") and t != "insert" else []) + [w for w in s.get("who", []) if w not in (s.get("subject"), s.get("fg"))]:
-            b.append(n)
+        for n in ([s["subject"]] if s.get("subject") and t not in ("insert", "pov") else []) + [w for w in s.get("who", []) if w not in (s.get("subject"), s.get("fg"))]:
+            b.append(n)  # 主观镜头：主观者本人不入画，不写进"画面里"（模型会把她画出来）
+        b += [n for n in s.get("see", []) if n not in b]  # 画面里的车、道具（只有车的追逐镜头）
+        if t == "pov" and not b:  # 主观镜头里没有人：写视线落在哪里（"走廊尽头"），不留空
+            ats = [x["at"] for x in (s.get("looks") or [{"at": s.get("look")}]) if isinstance(x.get("at"), str)]
+            b += list(dict.fromkeys(a for a in ats if a not in self.c.get("cast", {})))[-1:]
         if s.get("crowd"):
             ids = "、".join(map(str, s["crowd"].get("ids", [])))
             b.append(f"{world}群演（{ids} 号）{s['crowd'].get('doing', '')}")
         head = "画面里：" + "、".join(b) + "。"
         deg = K.LENS_DEG.get(lens, f"{lens}mm")
         mv = s.get("move")
-        base = MOVE[t]
+        base = MOVE[t] if t != "pov" else f"{s['subject']}的主观视角，{s['subject']}自己不入画"
         if t == "insert":  # 插入镜头按 cam_offset 写俯拍 / 仰拍；景别不是特写时不写"特写"（《好日子》第 7 条仰拍岩壁裂缝）
             off = s.get("cam_offset", [0.0, -0.45, 0.6])
             base = ("仰拍" if off[2] < 0 else "俯拍") + ("特写" if s.get("size") in (None, "特写", "大特写") else "")
+        cmv = self.cam_move(s)
+        if cmv:  # 手写机位、挂载机位在动：照白模写，不能写"固定"（白模和文字打架）
+            base = cmv["zh"] if t != "pov" else f"{base}，{cmv['zh']}"
         mtxt = base if not mv else (move_text(mv) if t in ("wide", "single") else f"{base}，{move_text(mv)}")
         parts = [f"{deg}，{s.get('size', '') + '，' if s.get('size') else ''}{mtxt}"]
         acts = s.get("action", [])
         for a in (acts if isinstance(acts, list) else [acts]):
             parts.append(f"第 {a['at']} 秒，{a['text']}" if isinstance(a, dict) and "at" in a else (a["text"] if isinstance(a, dict) else a))
+        timed = []
         for bt in s.get("beats", []):  # 节拍的文字和白模同一个来源：第几秒、谁、做什么
             if bt.get("text"):
-                parts.append(f"第 {round(t0 + bt['t'], 2):g} 秒，{bt['text']}")  # 整条的秒数，和时间轴、白模一致（节拍里的 t 是镜内秒数）
+                timed.append((bt["t"], f"第 {round(t0 + bt['t'], 2):g} 秒，{bt['text']}"))  # 整条的秒数，和时间轴、白模一致（节拍里的 t 是镜内秒数）
+        prev_at = None
+        for L in (s.get("looks") or (s.get("cam") or {}).get("looks") or []):  # 视线转动写进时间轴（第一人称回头、转回来），和白模同一来源
+            nm = self._look_name(L["at"])
+            if prev_at is not None and nm and nm != prev_at and L.get("t", 0) > 0:
+                timed.append((L["t"], f"第 {round(t0 + L['t'], 2):g} 秒，视线转向{nm}"))
+            prev_at = nm if nm else prev_at
+        parts += [x for _t, x in sorted(timed, key=lambda q: q[0])]
         if s.get("hit"):
             h = s["hit"]
             parts.append(f"动作因果：{h['support']}，{h['force']}，{h['contact']}，{h['reaction']}，{h['result']}")
@@ -1673,6 +1879,10 @@ class Clip:
                 sh["allow_small"] = s["allow_small"]
             if s.get("allow_exit"):
                 sh["allow_exit"] = s["allow_exit"]
+            if s.get("see"):  # 画面里要拍到的车和道具：几何检查按道具查入画、遮挡、大小
+                sh["see"] = ["prop_" + n for n in s["see"]]
+            if s.get("enter"):  # 长镜头里中途才入画的人：{"老板": 镜内秒}
+                sh["enter"] = s["enter"]
             acts = s.get("action", [])
             acts = acts if isinstance(acts, list) else [acts]
             sh["struct"] = {k: v for k, v in dict(
@@ -1681,7 +1891,8 @@ class Clip:
                 action=[{"at": a.get("at"), "zh": a.get("text"), "en": a.get("en")} if isinstance(a, dict) else {"zh": a} for a in acts],
                 line=s.get("line"), sound=[{"zh": x.get("text"), "en": x.get("en"), "source": x.get("source")} for x in s.get("sound", []) if isinstance(x, dict)],
                 crowd=s.get("crowd"), beats=s.get("beats"), hit_en=(s.get("hit") or {}).get("en"), vfx_en=(s.get("vfx") or {}).get("en"), acting_en=(s.get("acting") or {}).get("leak_en"), acting=(s.get("acting") or {}).get("leak"),
-                move=({"kind": s["move"]["kind"], "en": move_text(s["move"], "en"), "zh": move_text(s["move"])} if s.get("move") and s["move"].get("kind") in MOVES else None)).items() if v}  # 结构化镜头：海螺 / 万相的专用编译器用
+                move=({"kind": s["move"]["kind"], "en": move_text(s["move"], "en"), "zh": move_text(s["move"])} if s.get("move") and s["move"].get("kind") in MOVES
+                      else (dict(self.cam_move(s), kind="cam") if self.cam_move(s) else None))).items() if v}  # 结构化镜头：海螺 / 万相的专用编译器用
             poses = {n2: self.c["cast"][n2]["pose"] for n2 in dict.fromkeys([s.get("fg"), s.get("subject")] + list(s.get("who") or []))
                      if n2 and self.c["cast"].get(n2, {}).get("pose")}
             if poses:  # 这一镜画里每个人的姿势和状态；不喂白模时每镜都要重说一遍（《好日子》第 2 条：阿禾一镜站着盘发、一镜坐着披发）

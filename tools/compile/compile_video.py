@@ -217,7 +217,7 @@ def shot_line(model, sh, t0, idx):
 def previs_duty(model, spec, vref):
     desc, rows, _ = MP.previs_map(spec, MP.ref_lookup(spec["assets"], lambda i, a: ref_name(model, "image", i)))
     return (f"{vref} 是本条的白模预演，只提供镜头路线、切点、构图、空间布局、人物整体位置与路线、事件先后；"
-            f"外形、识别色、方块和白模的光都不继承。{desc}。逐个对应：" + "；".join(rows) + "。")
+            f"外形、识别色、方块和白模的光都不继承；小人的姿势只表示谁在什么时候做什么动作，动作本身按真人自然重新生成，不照搬僵硬的姿势、平移滑行和机械摆臂。{desc}。逐个对应：" + "；".join(rows) + "。")
 
 
 def build_prompt(spec, model, style, part):

@@ -105,7 +105,7 @@ def linear_all():
                 kp.interpolation = 'LINEAR'
 
 
-def ease_all(objs):
+def ease_all(objs, paths=("location",)):
     """运镜缓入缓出：这些物体的关键帧改成两端平的贝塞尔（自动钳制手柄），起步慢、中间快、收尾慢，不会冲过头。
     在 linear_all() 之后调用。"""
     for o in objs:
@@ -118,7 +118,7 @@ def ease_all(objs):
             curves = [fc for layer in ad.action.layers for strip in layer.strips
                       for bag in strip.channelbags for fc in bag.fcurves]
         for fc in curves:
-            if not fc.data_path.startswith("location"):
+            if not fc.data_path.startswith(paths):
                 continue
             for kp in fc.keyframe_points:
                 kp.interpolation = 'BEZIER'
@@ -208,12 +208,21 @@ POSES = {
     "fall": {"spine": 40},
     "nod": {}, "comb": {}, "pull": {}, "struggle": {}, "laugh": {"spine": -8},
     "reach": {}, "grab": {}, "give": {}, "point": {}, "hold": {}, "look": {},
+    # 打戏（4.0 alpha.12，高难镜头压力测试）：出拳 / 刺拳的手臂伸向 target，过渡极短；没有肘关节，用肩和躯干表现
+    "punch": {"spine": 12}, "jab": {"spine": 5},
+    "kick": {"hipR": -85, "spine": -18, "shL": -40, "shR": 25},           # 正蹬：右腿抬平，上身后仰保持平衡
+    "block": {"shL": -125, "shR": -125, "spine": 8, "neck": 15},          # 双臂护在脸前，缩头
+    "duck": {"hips": -0.3, "hipL": -75, "hipR": -75, "spine": 45},        # 矮身闪躲：比 crouch 更低、更前倾
+    "stagger": {"spine": -28, "shL": -50, "shR": -35, "neck": -20},       # 挨打后仰踉跄
+    "lie": {"hips": -0.47, "hipL": -90, "hipR": -90, "spine": -90, "neck": -10, "shL": -170, "shR": -170},  # 仰面躺在地上：腿朝面前、上身朝背后放平
+    "slump": {"hips": -0.43, "hipL": -80, "hipR": -80, "spine": -25, "neck": 20, "shL": -15, "shR": -15},  # 顺着墙滑坐到地上，头垂下
 }
+FAST = {"punch": 0.1, "jab": 0.08, "kick": 0.15, "block": 0.12, "duck": 0.15, "stagger": 0.12}  # 打戏姿态的过渡时间（秒）
 OSC = {  # 反复的动作：(关节, 振幅, 每秒次数)
     "nod": [("neck", 18, 1.6)], "comb": [("shR", 22, 1.2)], "pull": [("shL", 60, 0.8), ("shR", 60, 0.8)],
     "struggle": [("spine", 12, 2.0), ("shL", 30, 2.2), ("shR", 30, 1.8)], "laugh": [("spine", 5, 3.0)],
 }
-REACH = {"reach", "grab", "give", "point", "hold", "comb", "pull"}  # 手伸向 target
+REACH = {"reach", "grab", "give", "point", "hold", "comb", "pull", "punch", "jab"}  # 手伸向 target
 RAMP = 0.4
 
 
@@ -239,12 +248,19 @@ def apply_poses(parts, name, h, poses, dur, moving=None):
     poses = sorted(poses or [], key=lambda p: p["t0"])
     joints = ("hips", "spine", "neck", "shL", "shR", "hipL", "hipR")
 
+    def ramp(p):
+        """过渡时间：打戏姿态用 FAST；其余默认 0.4 秒，但不超过这段节拍的 45%（0.35 秒的一拳要伸得直）。"""
+        if "ramp" in p:
+            return p["ramp"]
+        return FAST.get(p["pose"], min(RAMP, max(0.08, (p["t1"] - p["t0"]) * 0.45)))
+
     def weight(p, t):
-        if t < p["t0"] or t > p["t1"] + RAMP:
+        r = ramp(p)
+        if t < p["t0"] or t > p["t1"] + r:
             return 0.0
-        if t < p["t0"] + RAMP:
-            return (t - p["t0"]) / RAMP
-        return 1.0 if t <= p["t1"] else max(0.0, 1 - (t - p["t1"]) / RAMP)
+        if t < p["t0"] + r:
+            return (t - p["t0"]) / r
+        return 1.0 if t <= p["t1"] else max(0.0, 1 - (t - p["t1"]) / r)
 
     def active(t):  # 身体姿态（坐、跪、弯腰……）和手势（点头、伸手……）叠加：每个关节取各段的加权和
         return [p for p in poses if weight(p, t) > 0]
@@ -255,7 +271,7 @@ def apply_poses(parts, name, h, poses, dur, moving=None):
             w = weight(p, t)
             v += POSES.get(p["pose"], {}).get(j, 0.0) * w
             for jj, amp, hz in OSC.get(p["pose"], []):
-                if jj == j and p["t0"] + RAMP <= t <= p["t1"]:
+                if jj == j and p["t0"] + ramp(p) <= t <= p["t1"]:
                     v += amp * math.sin(2 * math.pi * hz * (t - p["t0"]))
         return v
 
@@ -267,7 +283,7 @@ def apply_poses(parts, name, h, poses, dur, moving=None):
 
     times = {0.0, round(dur, 3)}
     for p in poses:
-        for x in (p["t0"], p["t0"] + RAMP, p["t1"], p["t1"] + RAMP):
+        for x in (p["t0"], p["t0"] + ramp(p), p["t1"], p["t1"] + ramp(p)):
             if 0 <= x <= dur:
                 times.add(round(x, 3))
         if p["pose"] in OSC:
@@ -310,17 +326,17 @@ def apply_poses(parts, name, h, poses, dur, moving=None):
             for a in arms:
                 con = parts[a].constraints.new("DAMPED_TRACK")
                 con.target, con.track_axis = tgt, "TRACK_NEGATIVE_Z"
-                _key_influence(con, p["t0"], p["t1"])
+                _key_influence(con, p["t0"], p["t1"], ramp=ramp(p))
         if p["pose"] in ("look", "nod") or p.get("look"):
             lt = _target_obj(p.get("look") or p.get("target"), {}, name)
             if lt is not None:
                 con = parts["neck"].constraints.new("DAMPED_TRACK")
                 con.target, con.track_axis = lt, "TRACK_NEGATIVE_Y"
-                _key_influence(con, p["t0"], p["t1"], peak=0.8)
+                _key_influence(con, p["t0"], p["t1"], peak=0.8, ramp=ramp(p))
 
 
-def _key_influence(con, t0, t1, peak=1.0):
-    for t, v in ((0, 0.0), (max(0.0, t0 - 0.01), 0.0), (t0 + RAMP, peak), (t1, peak), (t1 + RAMP, 0.0)):
+def _key_influence(con, t0, t1, peak=1.0, ramp=RAMP):
+    for t, v in ((0, 0.0), (max(0.0, t0 - 0.01), 0.0), (t0 + ramp, peak), (t1, peak), (t1 + ramp, 0.0)):
         con.influence = v
         con.keyframe_insert("influence", frame=1 + t * FPS)
 
@@ -579,7 +595,7 @@ LIGHTS = {
     "sunset":   dict(elev=9, energy=3.0, sun=(1.0, 0.66, 0.38), sky=(0.95, 0.62, 0.42), sky_strength=0.7),
     "dusk":     dict(elev=22, energy=2.2, sun=(0.82, 0.86, 1.0), sky=(0.50, 0.54, 0.66), sky_strength=0.5),
     "overcast": dict(elev=60, energy=0.6, sun=(1.0, 1.0, 1.0), sky=(0.62, 0.64, 0.67), sky_strength=1.0),
-    "night":    dict(elev=40, energy=0.25, sun=(0.6, 0.7, 1.0), sky=(0.06, 0.07, 0.11), sky_strength=0.6),
+    "night":    dict(elev=40, energy=2.2, sun=(0.72, 0.8, 1.0), sky=(0.24, 0.28, 0.4), sky_strength=0.55),  # 白模是结构参考：夜里也要读得清，只留冷色
 }
 
 
@@ -637,3 +653,113 @@ def apply_light(spec_light):
     d = Vector((-fx / n * math.cos(el), -fy / n * math.cos(el), -math.sin(el)))  # 光传播的方向：从 from 那边照过来、向下
     sun.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
     return sun
+
+
+# ---------------- 4.0 alpha.12：挂载机位（主观镜头、车内、车头）与按时间隐藏 ----------------
+
+HIDE = {}  # 物体名 → 要藏起来的时间段 [(t0, t1)]；flush_hidden() 一次性打关键帧（同一个人连着几个主观镜头都要藏，分开打会互相覆盖）
+
+
+def key_hidden(objs, t0, t1, only=False):
+    """这些物体在 [t0, t1) 秒里不渲染、不参与射线（白模机检看不到它）；only=True 反过来：只在这段时间出现。"""
+    for o in objs:
+        iv = HIDE.setdefault(o.name, [])
+        if only:
+            iv += [(-1.0, t0), (t1, 10.0 ** 5)]
+        else:
+            iv.append((t0, t1))
+
+
+def flush_hidden():
+    for name, iv in HIDE.items():
+        o = bpy.data.objects.get(name)
+        if o is None:
+            continue
+        merged = []
+        for a, b in sorted(iv):
+            if merged and a <= merged[-1][1] + 1e-6:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+            else:
+                merged.append((a, b))
+        keys = {1: any(a <= 0 < b for a, b in merged)}
+        for a, b in merged:
+            fa, fb = int(round(1 + a * FPS)), int(round(1 + b * FPS))
+            if fa > 1:
+                keys.setdefault(fa - 1, False)
+                keys[fa] = True
+            if fb < 10 ** 6:
+                keys.setdefault(fb - 1, True)
+                keys[fb] = False
+        for attr in ("hide_render", "hide_viewport"):
+            for f, v in sorted(keys.items()):
+                setattr(o, attr, v)
+                o.keyframe_insert(attr, frame=f)
+            ad = o.animation_data
+            try:
+                curves = ad.action.fcurves
+            except AttributeError:
+                curves = [x for layer in ad.action.layers for strip in layer.strips for bag in strip.channelbags for x in bag.fcurves]
+            for fc in curves:
+                if fc.data_path == attr:
+                    for kp in fc.keyframe_points:
+                        kp.interpolation = 'CONSTANT'
+    HIDE.clear()
+
+
+def owned(name):
+    """名字是 name 或以 name_ 开头的网格（一个人的全身、一个道具和它的帘子）。"""
+    return [o for o in bpy.data.objects if o.type == "MESH" and (o.name == name or o.name.startswith(name + "_"))]
+
+
+def mount_camera(s, c, t0, t1, aims):
+    """s.mount：人名（挂在头上）或 'prop_红车'（挂在车身中心）；mount_off 偏移；looks：[{t, yaw, pitch}] 视线；
+    hide：这一镜里藏起来的人或道具（主观者本人、镜头所在的那辆车）；hood：车内镜头的引擎盖；bob：走跑时上下颠的幅度（米）。"""
+    m = s["mount"]
+    tgt = bpy.data.objects.get(m + "_head") if not m.startswith("prop_") else (aims.get(m) or bpy.data.objects.get(m))
+    mt = bpy.data.objects.new(c.name + "_mount", None)
+    bpy.context.collection.objects.link(mt)
+    mt.location = tuple(s.get("mount_off", (0, 0, 0)))
+    if tgt is not None:
+        cl = mt.constraints.new("COPY_LOCATION")
+        cl.target, cl.use_offset = tgt, True
+    c.parent = mt
+    pv = bpy.data.objects.new(c.name + "_pivot", None)  # 视线：绕竖轴转的支点，转多少度就是 yaw（和人的 face 同一套角度）
+    bpy.context.collection.objects.link(pv)
+    pv.parent = mt
+    lt = bpy.data.objects.new(c.name + "_look", None)
+    bpy.context.collection.objects.link(lt)
+    lt.parent = pv
+    looks = s.get("looks") or [{"t": t0, "yaw": 0.0, "pitch": 0.0}]
+    prev = None
+    for L in looks:
+        y = L["yaw"]
+        if prev is not None:  # 走最短的那一圈：回头 170° 不会绕成 190°
+            while y - prev > 180:
+                y -= 360
+            while y - prev < -180:
+                y += 360
+        prev = y
+        key(pv, max(t0, L["t"]), rot=(0, 0, y))
+        key(lt, max(t0, L["t"]), loc=(0, -10.0, 10.0 * math.tan(math.radians(L.get("pitch", 0.0)))))
+    con = c.constraints.new("TRACK_TO")
+    con.target, con.track_axis, con.up_axis = lt, "TRACK_NEGATIVE_Z", "UP_Y"
+    bob = s.get("bob", 0.0)
+    k = t0
+    while k <= t1 + 1e-6:  # 走跑时上下颠：每步一次
+        key(c, k, loc=(0, 0, bob * math.sin(2 * math.pi * 2.6 * (k - t0)) if bob else 0.0))
+        k += 1.0 / 12 if bob else max(t1 - t0, 0.1)
+    for o in (pv, lt):  # 转头有加速减速，不是匀速摇
+        ease_all([o], paths=("location", "rotation_euler"))
+    hidden = []
+    for n in s.get("hide", []):
+        hidden += owned(n)
+    if hidden:
+        key_hidden(hidden, t0, t1)
+    if s.get("hood"):  # 车内：一块引擎盖，告诉模型"我在车里往前看"
+        hd = s["hood"]
+        w, L, h = hd["size"]
+        o = box("fx_hood_" + c.name, -w / 2, w / 2, -L / 2, L / 2, -h / 2, h / 2, tuple(hd.get("color", (0.85, 0.2, 0.15))))
+        o.parent = mt
+        o.location = tuple(hd["off"])
+        o.rotation_euler = (0, 0, math.radians(hd.get("yaw", 0.0) - 180))
+        key_hidden([o], t0, t1, only=True)

@@ -52,6 +52,7 @@ for b in SPEC.get("boxes", []):
 
 # 人物：4.0 alpha.8 起默认用关节小人（rig），按 poses 做姿态，走动时自动摆臂摆腿；"rig": false 退回圆柱 + 球头
 aims = {}
+rides = []
 for p in SPEC.get("people", []):
     h = p.get("height", 1.70)
     if p.get("shape") == "giant":  # 巨物形状代理：树干身子、根须、枝、空心环头（不做关节和姿态）
@@ -68,6 +69,8 @@ for p in SPEC.get("people", []):
         x, y, z = k["pos"]
         key(root, k["t"], loc=(x, y, z), rot=(-k.get("lean", 0), 0, k.get("face", 0)))
         key(aim, k["t"], loc=(x, y, z + 0.8 * h))
+    if p.get("ride"):  # 坐在车里：人和他的注视点用约束挂在车上，keys 里的位置就是座位偏移
+        rides.append((p, root, aim))
     if p.get("shape") == "giant" and any(k.get("head") for k in ks):
         giant_head(p["name"], tuple(p.get("color", (0.6, 0.35, 0.8))), h, ks)
     if parts:
@@ -83,6 +86,17 @@ for pr in SPEC.get("props", []):
     aims["prop_" + pr["name"]] = prop_object(pr)  # 镜头可以盯住移动的道具（look_at: "prop_花轿"）
 for fx in SPEC.get("effects", []):  # 特效代理：碎石、裂缝、落屑、巨物的臂
     effect(fx)
+for p, root, aim in rides:
+    car = aims.get(p["ride"])
+    if car is None:
+        continue
+    for o, dz in ((root, 0.0), (aim, 0.8 * p.get("height", 1.70))):
+        cl = o.constraints.new("COPY_LOCATION")
+        cl.target, cl.use_offset = car, True
+        sx, sy, sz = p.get("seat", (-0.4, 0.2, 0.1))
+        hh = car.dimensions.z / 2  # 道具的原点在车身中心，座位偏移从车底板算
+        for fc_t in sorted({k["t"] for k in p["keys"]}):
+            key(o, fc_t, loc=(sx, sy, sz - hh + dz))
 for p in SPEC.get("people", []):
     if p.get("_parts"):
         apply_poses(p["_parts"], p["name"], p.get("height", 1.70), p.get("poses", []), dur, p["_moving"])
@@ -94,7 +108,7 @@ def wobble(t, amp):
 
 # 镜头：每个 shot 从 start 开始，到下一个 shot 的 start 结束；时间轴标记绑定相机实现硬切
 shots = sorted(SPEC["shots"], key=lambda s: s["start"])
-cams, eased = [], []  # eased：要缓入缓出的运镜机位（规格 ease: true）
+cams, eased, mounted = [], [], []  # eased：要缓入缓出的运镜机位（规格 ease: true）；mounted：挂在人、车上的机位
 for i, s in enumerate(shots):
     c = camera(s.get("lens", 35))
     c.name = s.get("name", f"C{i + 1}")
@@ -118,6 +132,12 @@ for i, s in enumerate(shots):
         con.target = aim
         con.track_axis = "TRACK_NEGATIVE_Z"
         con.up_axis = "UP_Y"
+    if s.get("mount"):
+        mounted.append((s, c, s["start"], end))
+        cams.append((s["start"], c))
+        m = sc.timeline_markers.new(c.name, frame=int(1 + s["start"] * FPS))
+        m.camera = c
+        continue
     ks = keyed_times(s["keys"])
     amp = s.get("handheld", 0.0)
     times = sorted({k["t"] for k in ks} | ({round(s["start"] + j * 0.25, 2) for j in range(int((end - s["start"]) / 0.25) + 1)} if amp else set()))
@@ -147,6 +167,9 @@ sc.camera = cams[0][1]
 
 linear_all()
 ease_all(eased)
+for s, c, t0, t1 in mounted:  # 挂载机位最后搭：要用到人和道具的约束
+    mount_camera(s, c, t0, t1, aims)
+flush_hidden()
 if SPEC.get("light"):  # 光型（正午顶光、落日斜光……）：换 EEVEE + 太阳灯；没写 light 保持 Workbench 平光
     apply_light(SPEC["light"])
 os.makedirs(OUT, exist_ok=True)

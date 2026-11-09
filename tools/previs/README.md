@@ -30,6 +30,10 @@ python3 tools/previs/render_previs.py tools/previs/examples/示例_门口对峙.
   ],
   // 巨物："shape": "giant" 时不用小人，换成树干身子 + 外撇根须 + 四根斜枝 + 空心环头 + 几圈浅色布带（名字仍是 <名>_body / <名>_head）；
   //       keys 里写 "head": [x,y,z] 的时刻，空心头落到那个点，脖子从树干顶拉到环顶（俯身）
+  // 坐车：people 里 "ride": "prop_红车", "seat": [x, y, z]，人和注视点用约束挂在车上；props 里 "vehicle": true 按车速查
+  // 挂载机位：shots 里 "mount": 人名（挂在头上）或 "prop_红车"，"mount_off": [x,y,z]，"looks": [{"t": 秒, "yaw": 度, "pitch": 度}]（转头），
+  //       "hide": [这一镜藏起来的人或道具]，"hood": {"size", "off", "yaw", "color"}（车内引擎盖），"bob": 走跑上下颠的幅度（米）
+  //       "see": ["prop_红车"]（规格单里：画面里要拍到的道具，几何检查按道具查）
   "light": {"preset": "sunset", "from": [1, -1]},   // 可选：光型 noon / dawn / sunset / dusk / overcast / night，可覆盖 elev、energy、sun、sky、sky_strength；
                                                     //       写了就换 EEVEE + 太阳灯（真影子，物体照旧用识别色），不写保持 Workbench 平光
   "shots": [                        // 镜头：从 start 开始，到下一个镜头的 start 硬切

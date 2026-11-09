@@ -141,7 +141,10 @@ def person(name, color, h, pts):
     keys = []
     for t, pos, f, lean in pts:
         face = f if isinstance(f, (int, float)) else face_to(pos, f)
-        keys.append({"t": t, "pos": list(pos), "face": face, "lean": lean})
+        if keys:  # 朝向走最短的那一圈：180° 到 -170° 是转 10°，不是反着转 350°（4.0 alpha.12，验证条里秀英走着走着转身面对镜头）
+            prev = keys[-1]["face"]
+            face = prev + ((face - prev + 180) % 360 - 180)
+        keys.append({"t": t, "pos": list(pos), "face": round(face, 3), "lean": lean})
     return {"name": name, "color": color, "height": h, "keys": keys}
 
 
@@ -206,7 +209,7 @@ def export(project_root, project, short, items, world_boxes, clips, texts, previ
         for k, sh in enumerate(c["shots"], 1):
             shots_prev.append(dict(sh["cam"], start=sh["t0"]))
             s = {"t0": sh["t0"], "t1": sh["t1"], "id": k, "name": sh["name"], "body": sh["body"]}
-            for key in ("allow_small", "new_axis", "allow_occlude", "allow_exit", "struct"):
+            for key in ("allow_small", "new_axis", "allow_occlude", "allow_exit", "struct", "see", "enter"):
                 if sh.get(key):
                     s[key] = sh[key]
             spec_shots.append(s)

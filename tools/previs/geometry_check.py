@@ -11,6 +11,9 @@
   头后   主体头部正后方有没有塔、针、柱子这类竖直物体（会和人融成一体，第一版的老问题）
   穿墙   镜头位置是不是落在墙、道具的方块里面
   轴线   规格单写了 "axis": {"a": 人物, "b": 人物} 时，记录每镜机位在轴线哪一侧，两侧都出现就提醒越轴
+  身份   （4.0 alpha.12，学自 scenario-labs blockout skill）人物身边立着的零散方块会被模型读成多出来的人；
+         两个人的身子叠在一起会被读成一个人或长出多余的肢体；头钻进墙里、家具里会被画成断头
+  机位高度（只统计）  每镜机位比主体眼睛高或低多少；不是人眼高度的机位要有理由（俯视 = 压迫，仰视 = 威严）
 退出码 0 = 无 FAIL。
 """
 import json
@@ -77,6 +80,8 @@ def cam_at(t):
 
 
 def inside(o, p):
+    if o.hide_viewport:  # 这一镜里藏起来的（主观者本人、镜头所在的那辆车）
+        return False
     mn = Vector(min(v[i] for v in (o.matrix_world @ Vector(c) for c in o.bound_box)) for i in range(3))
     mx = Vector(max(v[i] for v in (o.matrix_world @ Vector(c) for c in o.bound_box)) for i in range(3))
     if not all(mn[i] + 1e-4 < p[i] < mx[i] - 1e-4 for i in range(3)):
@@ -107,7 +112,7 @@ def subjects(body):
             continue
         for p in people:
             if p in item:
-                if re.search(r"的手|的双手|的脚|光着的脚|的鼓面", item):
+                if re.search(r"的手|的双手|的右手|的左手|的拳头|的脚|光着的脚|的鼓面", item):
                     partial.append(p)
                 elif re.search(r"虚化|背影|肩膀|后脑|背对", item):
                     fg.append(p)
@@ -146,7 +151,7 @@ def ignorable(ob, mine):
     """mine 里的物件整个不算前景；mine 里的人只有手和胳膊不算（递东西、攥手腕时伸进画面的手），身子挡住了照样算。
     名字以 * 开头的是这一镜的焦点人物，整个人都不算。"""
     k = owner(ob)
-    if k.startswith("fx_"):
+    if k.startswith("fx_") or (ob.type == "MESH" and ob.dimensions.z < 0.06 and max(ob.dimensions.x, ob.dimensions.y) > 2):  # 路面、地毯这类贴地的薄层算地面
         return True
     if "*" + k in mine or (k in mine and k not in people):
         return True
@@ -184,8 +189,10 @@ for sh in spec["shots"]:
     ok_occ = set(sh.get("allow_occlude", []))
     notes = []
     level = "PASS"
+    main_all = list(main)
     for frac in (0.25, 0.5, 0.75):
         t = sh["t0"] + frac * L
+        main = [p for p in main_all if t - sh["t0"] >= sh.get("enter", {}).get(p, 0)]  # 长镜头里中途才入画的人，入画之前不查
         sc.frame_set(int(round(1 + t * FPS)))
         dg = bpy.context.evaluated_depsgraph_get()
         cam = cam_at(t)
@@ -203,7 +210,9 @@ for sh in spec["shots"]:
                 level = "FAIL"
                 break
         pts = focus_points(sh, main, partial, t - sh["t0"])
-        mine = {"*" + p for p, _q in pts}
+        ppts = [(n, bpy.data.objects[n].matrix_world.translation.copy()) for n in sh.get("see", [])
+                if bpy.data.objects.get(n) is not None and not bpy.data.objects[n].hide_viewport]  # 画面里要拍到的车和道具
+        mine = {"*" + p for p, _q in pts + ppts}
         st_ = sh.get("struct", {})
         if st_.get("type") == "insert":  # 特写里做动作的人、被拿的道具、动作的对象都是主体，不算前景
             for b in st_.get("beats") or []:
@@ -216,7 +225,26 @@ for sh in spec["shots"]:
                 q = bpy.data.objects[la].matrix_world.translation.copy() if isinstance(la, str) else Vector(la)
                 pts = [("_object", q)]
                 mine |= {o.name for o in boxes if inside(o, q) or o.name.startswith("代理_")}  # 对准点所在的物件（轿帘就是花轿的一面）、特写的代理块都是主体
-        cov = frame_cover(cam, cp, pts, mine)
+        for n, q in ppts:  # 只有车的镜头也要查：车在不在画里、有没有被挡、是不是小得看不见（高难镜头测试：整屏护栏照样 PASS）
+            ob = bpy.data.objects[n]
+            vq = world_to_camera_view(sc, cam, q)
+            if not (0 <= vq.x <= 1 and 0 <= vq.y <= 1 and vq.z > 0):
+                if not (n in sh.get("allow_exit", []) and frac >= 0.5):
+                    notes.append(f"{t:.1f}s「{n[5:]}」不在画面里")
+                    level = "FAIL"
+                continue
+            d = q - cp
+            hit, hl, _n, _i, hob, _m = sc.ray_cast(dg, cp, d.normalized(), distance=d.length)
+            if hit and owner(hob) != n and not hob.name.startswith(n + "_") and not hob.name.endswith("_Floor") and owner(hob) not in ok_occ \
+                    and (hl - cp).length < d.length - max(ob.dimensions) / 2:
+                notes.append(f"{t:.1f}s「{n[5:]}」被「{owner(hob)}」挡住")
+                level = "FAIL"
+            cs = [ob.matrix_world @ Vector(c_) for c_ in ob.bound_box]
+            ys = [world_to_camera_view(sc, cam, c_).y for c_ in cs]
+            if max(ys) - min(ys) < 0.03 and n not in sh.get("allow_small", []):
+                notes.append(f"{t:.1f}s「{n[5:]}」只占画高 {max(ys) - min(ys):.0%}，看不清")
+                level = "FAIL" if level == "FAIL" else "WARN"
+        cov = frame_cover(cam, cp, pts + ppts, mine)
         tot = sum(cov.values())
         # 人和道具挡住三成就算；布景（门框、镜框、墙）做前景框可以多占一些，过肩人物最多占一半
         big = [k for k, v in cov.items() if v > (0.5 if k in fg else 0.3 if ((k in people and k not in GIANTS) or k.startswith("prop_")) else 0.45)]  # 巨物在画面里是布景的分量
@@ -363,15 +391,15 @@ def _running(p, ta, tb):
     return any(q.get("pose") == "run" and q["t0"] < tb and q["t1"] > ta for q in p.get("poses", []))
 
 
-movers = [(p["name"], sorted(((k["t"], k["pos"]) for k in p["keys"]), key=lambda x: x[0]), p) for p in PV.get("people", [])]
-movers += [("prop_" + pr["name"], sorted(((k["t"], k["at"]) for k in pr.get("keys", []) if "at" in k), key=lambda x: x[0]), {}) for pr in PV.get("props", [])]
+movers = [(p["name"], sorted(((k["t"], k["pos"]) for k in p["keys"]), key=lambda x: x[0]), p) for p in PV.get("people", []) if not p.get("ride")]  # 坐车的人跟着车走，不查
+movers += [("prop_" + pr["name"], sorted(((k["t"], k["at"]) for k in pr.get("keys", []) if "at" in k), key=lambda x: x[0]), pr) for pr in PV.get("props", [])]
 fast = []
 for name, ks, p in movers:
     for (ta, a), (tb, b) in zip(ks, ks[1:]):
         d, dt = math.dist(a[:2], b[:2]), tb - ta
         if d < 0.3 or dt <= 0 or (dt <= 0.15 and any(ta - 1e-6 <= c <= tb + 1e-6 for c in cut_ts)):
             continue
-        lim = caps.get(name, 5.0 if _running(p, ta, tb) else 2.0)
+        lim = caps.get(name, 70.0 if p.get("vehicle") else (5.0 if _running(p, ta, tb) else 2.0))  # 载具按车速查（70 米/秒 ≈ 250 公里/小时）
         if d / dt > lim:
             fast.append(f"「{name}」{ta:.1f}–{tb:.1f} 秒走了 {d:.1f} 米（{d / dt:.1f} 米/秒，上限 {lim:g}）")
 if fast:
@@ -381,6 +409,54 @@ if fast:
 if len(set(axis_sides.values())) > 1:
     rows.append(({"id": "-", "name": "轴线", "t0": 0, "t1": spec["duration"]}, "WARN",
                  [f"机位在轴线两侧都出现：{axis_sides}（除非是有意换轴，并在规格里给该镜写 new_axis: true）"]))
+
+# 身份（4.0 alpha.12，scenario-labs blockout skill）：模型按白模里每块东西的位置和大小生成，"像人的东西"会变成人
+heights = []  # 机位高度统计（只统计，不拦）
+ident = []
+for sh in spec["shots"]:
+    t = (sh["t0"] + sh["t1"]) / 2
+    sc.frame_set(int(round(1 + t * FPS)))
+    cam = cam_at(t)
+    if cam is None:
+        continue
+    sc.camera = cam
+    cp = cam.matrix_world.translation
+    vis = lambda q: (lambda w: 0 <= w.x <= 1 and 0 <= w.y <= 1 and w.z > 0)(world_to_camera_view(sc, cam, q))  # noqa: E731
+    roots = {n: bpy.data.objects[n].matrix_world.translation.copy() for n in people if n not in GIANTS}
+    names = sorted(roots)
+    for i, a_ in enumerate(names):  # 两个人叠在一起
+        for b_ in names[i + 1:]:
+            if (roots[a_] - roots[b_]).xy.length < 0.3 and vis(roots[a_] + Vector((0, 0, 1.0))):
+                ident.append(f"镜 {sh['id']} {t:.1f}s「{a_}」和「{b_}」的身子叠在一起（相距 {(roots[a_] - roots[b_]).xy.length:.2f} 米），模型会画成一个人或多出肢体")
+    for n in names:  # 头钻进墙里、家具里
+        hd = bpy.data.objects.get(n + "_head")
+        if hd is None or not vis(hd.matrix_world.translation):
+            continue
+        for o in boxes:
+            if not o.name.startswith(("prop_", "fx_", "代理_")) and inside(o, hd.matrix_world.translation):
+                ident.append(f"镜 {sh['id']} {t:.1f}s「{n}」的头在「{o.name}」里面，会被画成断头或穿墙")
+                break
+    for o in [x for x in bpy.data.objects if x.type == "MESH" and x.name.startswith("prop_")]:  # 人身边立着的零散方块
+        if any(c.influence > 0.5 for c in o.constraints):  # 拿在手里、挂在身上的道具跟着人动，不算
+            continue
+        q = o.matrix_world.translation
+        dims = o.dimensions
+        if dims.z < 0.4 or max(dims.x, dims.y) > 1.2 or not vis(q):  # 小件、桌椅一类的大件都不算；只查半人高、细长的立着的块
+            continue
+        near = [n for n in names if (roots[n] - q).xy.length < 0.8]
+        if near:
+            ident.append(f"镜 {sh['id']} {t:.1f}s 道具「{o.name[5:]}」（{dims.z:.1f} 米高）立在「{near[0]}」身边 {(roots[near[0]] - q).xy.length:.1f} 米，容易被读成多出来的人：挪开一点，或在提示词里写明它是什么")
+    main, _fg, _partial = subjects(sh["body"])
+    for n in main:
+        hd = bpy.data.objects.get(n + "_head")
+        if hd is None or n in GIANTS:
+            continue
+        dz = cp.z - hd.matrix_world.translation.z
+        if abs(dz) > 0.5:
+            heights.append((sh, n, dz))
+        break
+if ident:
+    rows.append(({"id": "-", "name": "身份", "t0": 0, "t1": spec["duration"]}, "WARN", sorted(set(ident), key=ident.index)[:12]))
 
 lines = [f"# 白模几何检查：第 {spec['clip']} 条 {spec['title']}", "",
          "| 镜头 | 时间 | 结果 | 说明 |", "|---|---|---|---|"]
@@ -397,4 +473,10 @@ if side:
               "| 镜头 | 两人 | 视线和连线夹角 |", "|---|---|---|"]
     for sh, a_, b_, ang in side:
         lines.append(f"| {sh['id']} {sh['name']} | {a_}、{b_} | {ang:.0f}° |")
+if heights:
+    lines += ["", "## 机位高度（只统计，不拦）", "",
+              "不是人眼高度的机位是一种表态：高机位往下压 = 渺小、被审视；低机位往上 = 威严、压迫。分镜里要说得出为什么这样拍，说不出就回到平视。", "",
+              "| 镜头 | 主体 | 机位比眼睛 |", "|---|---|---|"]
+    for sh, n, dz in heights:
+        lines.append(f"| {sh['id']} {sh['name']} | {n} | {'高' if dz > 0 else '低'} {abs(dz):.1f} 米（{'俯拍' if dz > 0 else '仰拍'}） |")
 open(OUT, "w", encoding="utf-8").write("\n".join(lines) + "\n")

@@ -142,7 +142,7 @@ def hailuo(spec, part, short_duty_fn):
                         "it is not a first frame and its composition is not copied.")
             keep.append(f"{lab}: partially_preserved — layout, materials and lighting")
     desc, rows, _ = previs_map(spec, ref_lookup(assets, lambda i, a: label[a["name"]]), "en")
-    defs.append("<Video 1>: the previs of this clip. It defines only the camera path, cut points, framing, blocking and the order of events. "
+    defs.append("<Video 1>: the previs of this clip. It defines only the camera path, cut points, framing, blocking and the order of events; the proxies' poses only say who does what and when — generate natural human motion, never copy their stiff poses, sliding or mechanical arm swings. "
                 f"{desc}. Each proxy is replaced by real content: " + "; ".join(rows) + ". Only real people, sets and props appear in the target video.")
     for a in spec.get("_audio", []):  # 音色参考（sound 阶段生成）
         who = label.get(a["name"], a["name"])

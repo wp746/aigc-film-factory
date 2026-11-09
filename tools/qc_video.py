@@ -9,6 +9,9 @@
   声音     每镜平均音量和每 0.5 秒滑动 1 秒窗口的最低音量；规格单写了声音或台词的镜头，有一段 < -35 dB 就标出来
   台词     装了 faster-whisper 就听写，逐句和规格单台词比对（相似度）；没装就跳过并说明
   拼图     每 0.5 秒一帧，logs/审片拼图_第N条.jpg，给智能体目检
+  逐镜     每镜每秒 4 帧一张图，logs/审片逐镜_第N条/镜K.jpg：看站位、朝向、前后景、道具在谁手里（4.0 alpha.12）
+  并排     有白模的条，白模和成片左右并排、每 0.5 秒一帧，logs/审片并排_第N条.jpg：
+           机位、构图、切点对不对得上，每个颜色变成了谁，有没有白模形状残留（学自 scenario-labs blockout skill）
 """
 import difflib
 import json
@@ -49,7 +52,13 @@ def transcribe(video):
     try:
         from faster_whisper import WhisperModel
     except ImportError:
-        return None
+        try:  # 没装 faster-whisper 时用 openai-whisper（本机已装 medium 模型）
+            import whisper
+        except ImportError:
+            return None
+        m = whisper.load_model(os.environ.get("QC_WHISPER_OPENAI", "medium"))
+        r = m.transcribe(video, language="zh", word_timestamps=True, condition_on_previous_text=False)
+        return [(w["start"], w["end"], w["word"]) for s in r["segments"] for w in s.get("words", [])]
     m = WhisperModel(os.environ.get("QC_WHISPER_MODEL", "deepdml/faster-whisper-large-v3-turbo-ct2"), device="cpu", compute_type="int8")
     segs, _ = m.transcribe(video, language="zh", word_timestamps=True, initial_prompt="以下是普通话句子。")
     return [(w.start, w.end, w.word) for s in segs for w in s.words]  # 逐字时间，按镜头切
@@ -66,6 +75,7 @@ def main(proj, clip, video):
         return 1
     spec = json.load(open(spec_p, encoding="utf-8"))
     video = os.path.abspath(video)
+    os.makedirs(os.path.join(proj, "logs"), exist_ok=True)  # 新项目还没有 logs 时，拼图会悄悄写不出来
     out = [f"# 审片机检：{clip}（{os.path.basename(video)}）", ""]
     D = duration(video)
     ok_d = abs(D - spec["duration"]) <= 0.3
@@ -98,8 +108,29 @@ def main(proj, clip, video):
         out.append("\n听写会把同音字听错（如\"劈中\"听成\"批中\"），相似度 ≥ 60% 一般就是说对了；低于的要人工听。")
     sheet = os.path.join(proj, "logs", f"审片拼图_{clip}.jpg")
     sh(["ffmpeg", "-v", "error", "-y", "-ss", "0.25", "-i", video, "-vf", "fps=2,scale=320:-1,tile=10x6", "-frames:v", "1", sheet])
+    per = os.path.join(proj, "logs", f"审片逐镜_{clip}")
+    os.makedirs(per, exist_ok=True)
+    for s in spec["shots"]:  # 逐镜每秒 4 帧（审片标准：站位、朝向、前后景、道具在谁手里、手的身份都要逐镜看）
+        n = max(1, int(math.ceil((s["t1"] - s["t0"]) * 4)))
+        sh(["ffmpeg", "-v", "error", "-y", "-ss", str(s["t0"]), "-t", str(s["t1"] - s["t0"]), "-i", video,
+            "-vf", f"fps=4,scale=480:-1,tile=4x{int(math.ceil(n / 4))}", "-frames:v", "1", os.path.join(per, f"镜{s['id']}.jpg")])
+    previs = os.path.join(proj, "交付", spec.get("previs", "")) if spec.get("previs") else ""
+    side = ""
+    if previs and os.path.exists(previs):  # 白模和成片并排：机位、切点、每个颜色变成了谁、有没有白模形状残留
+        side = os.path.join(proj, "logs", f"审片并排_{clip}.jpg")
+        sh(["ffmpeg", "-v", "error", "-y", "-i", previs, "-i", video, "-filter_complex",
+            "[0:v]fps=2,scale=-2:270[a];[1:v]fps=2,scale=-2:270[b];[a][b]hstack,tile=3x10", "-frames:v", "1", side])
     out += ["", f"- 拼图：`logs/审片拼图_{clip}.jpg`（每 0.5 秒一帧）",
-            "", "## 智能体目检（按 docs/04 24 分制，对照每镜「画面里」和 docs/14 4.1）", "",
+            f"- 逐镜：`logs/审片逐镜_{clip}/镜K.jpg`（每镜每秒 4 帧）"]
+    if side:
+        out.append(f"- 白模并排：`logs/审片并排_{clip}.jpg`（左白模、右成片，每 0.5 秒一对）")
+    out += ["", "## 逐镜目检（先填这张，再打分；docs/14 4.3）", "",
+            "每镜看：谁坐谁站、面朝谁、在画面哪一侧；姿势、发型和上一镜一致吗；前景背景有没有多出来的人或东西；"
+            "道具在谁手里、谁递给谁；手接得上对的肩膀吗；要看清的脸看得见吗；台词音量和情绪对吗；表演和肢体有没有夸张、多余的动作。", "",
+            "| 镜 | 写的 | 实际 | 判断 |", "|---|---|---|---|"]
+    out += [f"| {s['id']} {s['name']} |  |  |  |" for s in spec["shots"]]
+    out += ["",
+            "## 智能体目检（按 docs/04 24 分制，对照每镜「画面里」和 docs/14 4.1）", "",
             "| 维度 | 权重 | 得分 0/1/2 | 依据（时间点 + 现象） |", "|---|---|---|---|"]
     for dim, w in (("D1 叙事完成", "×2"), ("D2 身份锁", "×2"), ("D3 表演", "×2"), ("D4 空间连续", "×1.5"), ("D5 运动与物理", "×1.5"),
                    ("D6 摄影", "×1"), ("D7 台词与声音", "×1"), ("D8 画面卫生", "×1")):
