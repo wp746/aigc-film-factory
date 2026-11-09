@@ -439,6 +439,8 @@ for sh in spec["shots"]:
     for o in [x for x in bpy.data.objects if x.type == "MESH" and x.name.startswith("prop_")]:  # 人身边立着的零散方块
         if any(c.influence > 0.5 for c in o.constraints):  # 拿在手里、挂在身上的道具跟着人动，不算
             continue
+        if (o.parent is not None and o.parent.name.startswith("prop_")) or o.hide_viewport:  # 大道具上的零件（花轿的帘子）、这一镜藏起来的不算（《好日子》第 4 条误拦）
+            continue
         q = o.matrix_world.translation
         dims = o.dimensions
         if dims.z < 0.4 or max(dims.x, dims.y) > 1.2 or not vis(q):  # 小件、桌椅一类的大件都不算；只查半人高、细长的立着的块

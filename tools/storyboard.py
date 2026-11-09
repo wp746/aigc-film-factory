@@ -1675,7 +1675,8 @@ class Clip:
                     q2 = self.pos(o2, tt)
                     v2 = [q2[0] - pos0[0], q2[1] - pos0[1]]
                     L2 = math.hypot(*v2)
-                    if L2 < dist * 1.2 and (v2[0] * d0[0] + v2[1] * d0[1]) > 0.55 * L2:
+                    tall = q2[2] + 0.9 * self.height(o2) > pos0[2] + 0.9 * h - 0.3  # 头够得到主体的视线才算挡；坐着、蹲着的人不挡（《好日子》秀英站在坐着的阿禾身后梳头）
+                    if tall and L2 < dist * 1.2 and (v2[0] * d0[0] + v2[1] * d0[1]) > 0.55 * L2:
                         swing = 1.0 if (d0[0] * v2[1] - d0[1] * v2[0]) < 0 else -1.0  # 转到另一个人不在的那一侧
             swing = s.get("swing", swing)
         sw_ang = math.radians(90 if t == "track" else 50) * swing  # 跟拍转到正侧面；单人镜头只转 50°，还是看得到脸
